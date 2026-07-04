@@ -19,12 +19,19 @@ yarn-error.log*
 
 # Persistence & Logs
 *.log
-# *.db
+telemetry.db
 *.sqlite3
 !/data/
+**/bytewax_logs*.txt
 .env
 .env.*
 !.env.example
+
+# Generated deploy artifacts & backups
+deploy/_space_build/
+dashboard/backend/static/
+*.bak
+*.dup-backup
 
 # IDEs & OS
 .vscode/

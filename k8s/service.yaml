@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: monoxai-dashboard
+  namespace: monoxai
+  labels:
+    app: monoxai-dashboard
+spec:
+  # Change to LoadBalancer (cloud) or use the Ingress below to expose publicly.
+  type: ClusterIP
+  selector:
+    app: monoxai-dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: 7860

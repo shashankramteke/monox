@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monoxai-dashboard
+  namespace: monoxai
+  labels:
+    app: monoxai-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: monoxai-dashboard
+  template:
+    metadata:
+      labels:
+        app: monoxai-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          # Build from deploy/Dockerfile and push to your registry:
+          #   docker build -t <registry>/monoxai:latest deploy/_space_build
+          image: <registry>/monoxai:latest
+          ports:
+            - containerPort: 7860
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: monoxai-secrets
+                  key: gemini-api-key
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/stats
+              port: 7860
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/stats
+              port: 7860
+            initialDelaySeconds: 15
+            periodSeconds: 20

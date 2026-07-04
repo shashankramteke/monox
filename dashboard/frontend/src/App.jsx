@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Activity, AlertTriangle, Cpu, Globe, RefreshCcw, Zap, Search, Brain, X,
-  Server, Shield, Box, LayoutPanelLeft, ChevronRight, BarChart3, Clock3, FileText
+  Server, Shield, Box, LayoutPanelLeft, ChevronRight, BarChart3, Clock3, FileText,
+  CreditCard, Boxes, Wallet, TrendingUp
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { clsx } from 'clsx';
@@ -42,8 +43,14 @@ function smoothPath(values, { width = 100, height = 20, padding = 2 } = {}) {
   return d;
 }
 
-const BACKEND_URL = "http://localhost:8000";
-const WS_URL = "ws://localhost:8000/ws";
+// In dev, talk to the local backend directly; in production the API and UI
+// are served from the same origin (single container deploy).
+const BACKEND_URL = import.meta.env.DEV
+  ? "http://localhost:8000"
+  : window.location.origin;
+const WS_URL = import.meta.env.DEV
+  ? "ws://localhost:8000/ws"
+  : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 // Maps backend `anomaly_type` → Tailwind classes for the row badge and panel header.
 const ANOMALY_STYLE = {
@@ -58,6 +65,12 @@ const ANOMALY_STYLE = {
   "Boundary Anomaly (SVM)":           { text: "text-violet-300", bg: "bg-violet-500/15", border: "border-violet-500/30", dot: "bg-violet-500" },
   "ML Ensemble Anomaly":              { text: "text-blue-300", bg: "bg-blue-500/15", border: "border-blue-500/30", dot: "bg-blue-500" },
   "Unclassified Anomaly":             { text: "text-slate-300", bg: "bg-slate-500/15", border: "border-slate-500/30", dot: "bg-slate-500" },
+  "Payment Failure Spike":            { text: "text-rose-300", bg: "bg-rose-600/15", border: "border-rose-600/30", dot: "bg-rose-600" },
+  "Gateway Timeout":                  { text: "text-amber-300", bg: "bg-amber-500/15", border: "border-amber-500/30", dot: "bg-amber-500" },
+  "Fraud Velocity":                   { text: "text-fuchsia-300", bg: "bg-fuchsia-500/15", border: "border-fuchsia-500/30", dot: "bg-fuchsia-500" },
+  "Duplicate Charge":                 { text: "text-orange-300", bg: "bg-orange-500/15", border: "border-orange-500/30", dot: "bg-orange-500" },
+  "Pod CrashLoopBackOff":             { text: "text-red-300", bg: "bg-red-600/15", border: "border-red-600/30", dot: "bg-red-600" },
+  "Pod OOMKilled":                    { text: "text-rose-300", bg: "bg-rose-500/15", border: "border-rose-500/30", dot: "bg-rose-500" },
 };
 const DEFAULT_STYLE = { text: "text-rose-300", bg: "bg-rose-500/15", border: "border-rose-500/30", dot: "bg-rose-500" };
 const styleFor = (type) => ANOMALY_STYLE[type] || DEFAULT_STYLE;
@@ -68,13 +81,49 @@ const RULE_PILLS = [
   { key: "bimodal_latency",  label: "Bimodal Latency",  metaKey: "latency_variance", fmt: (v) => v > 0 ? `σ²≈${Math.round(v).toLocaleString()}` : null, color: "amber" },
   { key: "dependency_break", label: "Dangling Parent",  metaKey: "dangling_span",    fmt: (v) => v ? `@${v}` : null, color: "red" },
   { key: "pii_density",      label: "PII Density",      metaKey: "redaction_ratio",  fmt: (v) => v > 0 ? `${Math.round(v * 100)}%` : null, color: "purple" },
+  { key: "payment_failure",  label: "Failure Spike",    metaKey: "failure_rate",     fmt: (v) => v > 0 ? `${Math.round(v * 100)}%` : null, color: "red" },
+  { key: "gateway_timeout",  label: "Gateway Timeout",  metaKey: "gateway",          fmt: (v) => v || null, color: "amber" },
+  { key: "fraud_velocity",   label: "Fraud Velocity",   metaKey: "txn_per_min",      fmt: (v) => v > 0 ? `${v}/min` : null, color: "fuchsia" },
+  { key: "duplicate_charge", label: "Duplicate Charge", metaKey: "dup_txn_id",       fmt: (v) => v ? `#${String(v).slice(0, 10)}` : null, color: "orange" },
+  { key: "k8s_pod",          label: "K8s Pod",          metaKey: "k8s_restarts",     fmt: (v) => v > 0 ? `${v} restarts` : null, color: "sky" },
 ];
 const PILL_COLOR = {
   orange: "bg-orange-500/10 text-orange-300 border-orange-500/30",
   amber:  "bg-amber-500/10 text-amber-300 border-amber-500/30",
   red:    "bg-red-500/10 text-red-300 border-red-500/30",
   purple: "bg-purple-500/10 text-purple-300 border-purple-500/30",
+  fuchsia: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30",
+  sky:    "bg-sky-500/10 text-sky-300 border-sky-500/30",
 };
+
+// ── Transaction display metadata ──────────────────────────────────
+const TXN_STATUS_STYLE = {
+  SUCCESS: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  FAILED:  "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  PENDING: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+};
+const CURRENCY_SYMBOL = { INR: "₹", USD: "$", EUR: "€", GBP: "£" };
+
+function fmtAmount(amount, currency = "INR") {
+  const sym = CURRENCY_SYMBOL[currency] || "";
+  return sym + Number(amount ?? 0).toLocaleString(currency === "INR" ? "en-IN" : "en-US", { maximumFractionDigits: 0 });
+}
+
+function fmtINRCompact(v) {
+  if (v >= 1e7) return `₹${(v / 1e7).toFixed(2)} Cr`;
+  if (v >= 1e5) return `₹${(v / 1e5).toFixed(2)} L`;
+  return `₹${Number(v ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+const K8S_STATUS_STYLE = {
+  Running:          "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  Pending:          "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  CrashLoopBackOff: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  OOMKilled:        "bg-red-500/10 text-red-400 border-red-500/30",
+  ImagePullBackOff: "bg-orange-500/10 text-orange-400 border-orange-500/30",
+};
+
+const SERVICE_NAV = ["All Services", "api-gateway", "payment-service", "order-service", "fraud-service", "wallet-service", "notification-service"];
 
 export default function App() {
   const [anomalies, setAnomalies] = useState([]);
@@ -87,6 +136,13 @@ export default function App() {
   const [liveMode, setLiveMode] = useState(true);
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const [autoCorrelation, setAutoCorrelation] = useState(true);
+
+  // View switcher + live payment/K8s state
+  const [view, setView] = useState("Observability");
+  const [txns, setTxns] = useState([]);
+  const [txnStats, setTxnStats] = useState(null);
+  const [txnSeries, setTxnSeries] = useState([]);
+  const [k8s, setK8s] = useState(null);
 
   const [traceContext, setTraceContext] = useState(null);
   const [traceLogs, setTraceLogs] = useState([]);
@@ -201,6 +257,26 @@ export default function App() {
             .catch(() => {});
         } else if (msg.type === "metric_update") {
           setMetrics(prev => [...prev, msg.data].slice(-600));
+        } else if (msg.type === "new_transaction") {
+          setTxns(prev => [msg.data, ...prev].slice(0, 60));
+        } else if (msg.type === "txn_stats") {
+          const d = msg.data;
+          setTxnStats(prev => ({ ...(prev || {}), ...d }));
+          setTxnSeries(prev => {
+            const last = prev[prev.length - 1];
+            const point = {
+              time: new Date(d.timestamp || Date.now()).toLocaleTimeString(),
+              success_rate: d.success_rate,
+              tps: d.tps ?? 0,
+              successDelta: last ? Math.max(0, d.success - last._successCum) : 0,
+              failedDelta: last ? Math.max(0, d.failed - last._failedCum) : 0,
+              volumeDelta: last ? Math.max(0, d.volume_inr - last._volumeCum) : 0,
+              _successCum: d.success, _failedCum: d.failed, _volumeCum: d.volume_inr,
+            };
+            return [...prev, point].slice(-60);
+          });
+        } else if (msg.type === "k8s_update") {
+          setK8s(msg.data);
         } else if (msg.type === "history") {
           setAnomalies(msg.data);
         }
@@ -209,6 +285,9 @@ export default function App() {
   };
 
   const runRCA = async (alert) => {
+    // The Diagnostic Center lives in the Observability view — always switch
+    // there so investigating from Transactions/Kubernetes views works.
+    setView("Observability");
     setSelectedTrace(alert);
     setIsAnalyzing(false);
     setAnalysis(null);
@@ -217,9 +296,13 @@ export default function App() {
     setTraceLogsLoading(true);
     setActiveTab("Overview");
     try {
-      // 1. Fetch FULL trace inventory for waterfall
+      // 1. Fetch FULL trace inventory for waterfall. Payment/K8s/PII alerts
+      // have no stored trace (404) — fall back to the alert's own data so
+      // AI Analysis still works.
       const traceRes = await fetch(`${BACKEND_URL}/api/traces/${alert.trace_id}`);
-      const fullTrace = await traceRes.json();
+      const fullTrace = traceRes.ok
+        ? await traceRes.json()
+        : { duration_ms: alert.duration_ms ?? 0, spans: alert.spans || [] };
 
       const spans = fullTrace.spans || [];
       const firstStart = spans.length > 0 ? Math.min(...spans.map(s => new Date(s.start_time).getTime())) : 0;
@@ -234,7 +317,7 @@ export default function App() {
 
       const context = {
         trace_id: alert.trace_id,
-        duration_ms: fullTrace.duration_ms,
+        duration_ms: fullTrace.duration_ms ?? alert.duration_ms ?? 0,
         spans: normalizedSpans
       };
 
@@ -248,64 +331,79 @@ export default function App() {
       }
     } catch (err) {
       console.error("RCA Failed:", err);
+      // Even if the trace fetch dies, give AI Analysis a minimal context so
+      // the tab is never stuck without data.
+      setTraceContext({ trace_id: alert.trace_id, duration_ms: alert.duration_ms ?? 0, spans: [] });
     } finally {
       setTraceLogsLoading(false);
     }
   };
 
-  const handleTabClick = async (tab) => {
-    setActiveTab(tab);
-
-    if (tab === "AI Analysis" && traceContext && !analysis && !isAnalyzing) {
-      setIsAnalyzing(true);
-      try {
-        const rcaPayload = {
-          ...traceContext,
-          service: selectedTrace?.service || "unknown",
-          route: selectedTrace?.route || "unknown",
-          anomaly_score: selectedTrace?.anomaly_score ?? 0,
-          is_anomaly: selectedTrace?.is_anomaly ?? true,
-          anomaly_type: selectedTrace?.anomaly_type,
-          timestamp: selectedTrace?.timestamp || new Date().toISOString(),
-          reasons: selectedTrace?.reasons,
-          rule_flags: selectedTrace?.rule_flags,
-          ml_scores: selectedTrace?.ml_scores,
-          spans: (traceContext.spans || []).map(s => ({
-            name: s.name || "unknown",
-            service: s.service || "unknown",
-            duration_ms: s.duration ?? s.duration_ms ?? 0,
-            start_time: s.start_time || new Date().toISOString(),
-            status_code: s.status_code,
-            is_anomaly: s.is_anomaly,
-            span_id: s.span_id,
-            parent_span_id: s.parent_span_id,
-          })),
-        };
-        const response = await fetch(`${BACKEND_URL}/api/rca/${traceContext.trace_id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(rcaPayload)
-        });
-        if (!response.ok) {
-          const errBody = await response.text();
-          console.error(`RCA API error ${response.status}:`, errBody);
-          throw new Error(`API ${response.status}: ${errBody}`);
-        }
-        const data = await response.json();
-        setAnalysis({ ...data, traceData: traceContext });
-      } catch (err) {
-        console.error("AI Analysis Failed:", err);
-        setAnalysis({
-          root_cause: `AI analysis failed: ${err.message || "Unknown error"}`,
-          suggested_fixes: ["Check GEMINI_API_KEY configuration", "Check backend logs for details", "Try again in a few moments"],
-          risk_prediction: "N/A",
-          traceData: traceContext
-        });
-      } finally {
-        setIsAnalyzing(false);
+  const runAIAnalysis = async (ctx) => {
+    setIsAnalyzing(true);
+    try {
+      const rcaPayload = {
+        ...ctx,
+        duration_ms: ctx.duration_ms ?? selectedTrace?.duration_ms ?? 0,
+        service: selectedTrace?.service || "unknown",
+        route: selectedTrace?.route || "unknown",
+        anomaly_score: selectedTrace?.anomaly_score ?? 0,
+        is_anomaly: selectedTrace?.is_anomaly ?? true,
+        anomaly_type: selectedTrace?.anomaly_type,
+        timestamp: selectedTrace?.timestamp || new Date().toISOString(),
+        reasons: selectedTrace?.reasons,
+        rule_flags: selectedTrace?.rule_flags,
+        ml_scores: selectedTrace?.ml_scores,
+        spans: (ctx.spans || []).map(s => ({
+          name: s.name || "unknown",
+          service: s.service || "unknown",
+          duration_ms: s.duration ?? s.duration_ms ?? 0,
+          start_time: s.start_time || new Date().toISOString(),
+          status_code: s.status_code,
+          is_anomaly: s.is_anomaly,
+          span_id: s.span_id,
+          parent_span_id: s.parent_span_id,
+        })),
+      };
+      const response = await fetch(`${BACKEND_URL}/api/rca/${ctx.trace_id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rcaPayload)
+      });
+      if (!response.ok) {
+        const errBody = await response.text();
+        console.error(`RCA API error ${response.status}:`, errBody);
+        throw new Error(`API ${response.status}: ${errBody}`);
       }
+      const data = await response.json();
+      setAnalysis({ ...data, traceData: ctx });
+    } catch (err) {
+      console.error("AI Analysis Failed:", err);
+      setAnalysis({
+        root_cause: `AI analysis failed: ${err.message || "Unknown error"}`,
+        suggested_fixes: ["Check GEMINI_API_KEY configuration", "Check backend logs for details", "Try again in a few moments"],
+        risk_prediction: "N/A",
+        traceData: ctx
+      });
+    } finally {
+      setIsAnalyzing(false);
     }
   };
+
+  const handleTabClick = (tab) => {
+    setActiveTab(tab);
+    if (tab === "AI Analysis" && traceContext && !analysis && !isAnalyzing) {
+      runAIAnalysis(traceContext);
+    }
+  };
+
+  // If the AI Analysis tab was opened before the incident context finished
+  // loading, kick off the analysis as soon as the context arrives.
+  useEffect(() => {
+    if (activeTab === "AI Analysis" && traceContext && !analysis && !isAnalyzing) {
+      runAIAnalysis(traceContext);
+    }
+  }, [activeTab, traceContext]);
 
   const chartData = useMemo(() => {
     const metricType = getMetricTypeForMode(monitoringMode);
@@ -399,6 +497,28 @@ export default function App() {
     fetchHistory();
   }, [selectedService, monitoringMode]);
 
+  // Initial + periodic sync of transactions and K8s state (WS keeps it live;
+  // this covers first paint and reconnects).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [txnData, statsData, k8sData] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/transactions?limit=50`).then(r => r.ok ? r.json() : []),
+          fetch(`${BACKEND_URL}/api/transactions/stats`).then(r => r.ok ? r.json() : null),
+          fetch(`${BACKEND_URL}/api/k8s/cluster`).then(r => r.ok ? r.json() : null),
+        ]);
+        if (cancelled) return;
+        setTxns(prev => (prev.length > 5 ? prev : txnData));
+        if (statsData) setTxnStats(prev => ({ ...(prev || {}), ...statsData }));
+        if (k8sData) setK8s(k8sData);
+      } catch { /* backend not ready yet */ }
+    };
+    load();
+    const id = setInterval(load, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   return (
     <div className="flex min-h-screen bg-[#020617] text-slate-100 font-sans">
       {/* Sidebar */}
@@ -411,9 +531,35 @@ export default function App() {
         </div>
 
         <nav className="space-y-4">
-          <label className="text-[10px] uppercase font-black tracking-widest text-slate-500">Service Topology</label>
+          <label className="text-[10px] uppercase font-black tracking-widest text-slate-500">Views</label>
           <div className="space-y-1">
-            {["All Services", "api-gateway", "python-service"].map(svc => (
+            {[
+              { name: "Observability", icon: Activity },
+              { name: "Transactions", icon: CreditCard },
+              { name: "Kubernetes", icon: Boxes },
+            ].map(({ name, icon: Icon }) => (
+              <button
+                key={name}
+                onClick={() => setView(name)}
+                className={cn(
+                  "w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center justify-between group",
+                  view === name ? "bg-indigo-600/10 text-indigo-400 font-bold" : "text-slate-400 hover:bg-slate-800"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Icon className="w-4 h-4" />
+                  {name}
+                </div>
+                {view === name && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <nav className="space-y-4">
+          <label className="text-[10px] uppercase font-black tracking-widest text-slate-500">Service Topology</label>
+          <div className="space-y-1 max-h-52 overflow-y-auto custom-scrollbar">
+            {SERVICE_NAV.map(svc => (
               <button
                 key={svc}
                 onClick={() => setSelectedService(svc)}
@@ -513,6 +659,19 @@ export default function App() {
           </div>
         </header>
 
+        {view === "Transactions" ? (
+          <TransactionsView
+            txns={txns}
+            stats={txnStats}
+            series={txnSeries}
+            searchQuery={searchQuery}
+            anomalies={anomalies}
+            onInvestigate={(a) => { setView("Observability"); runRCA(a); }}
+          />
+        ) : view === "Kubernetes" ? (
+          <KubernetesView k8s={k8s} />
+        ) : (
+        <>
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-6 mb-8">
           <StatCard label="Throughput" value={summaryStats.throughput} trend={summaryStats.throughputTrend} icon={<Activity className="text-indigo-400" />} color="indigo" series={summaryStats.throughputSeries} />
@@ -675,7 +834,9 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Visual Blocks — data-driven from trace context */}
+                      {/* Visual Blocks — span waterfall when a trace exists,
+                          otherwise incident context (payments / K8s / PII). */}
+                      {(analysis.traceData?.spans?.length ?? 0) > 0 ? (
                       <div className="grid grid-cols-3 gap-4">
                         <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Timeline</h6>
@@ -720,6 +881,58 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+                      ) : (
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                          <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Incident Source</h6>
+                          <div className="space-y-2">
+                            <div>
+                              <div className="text-[8px] text-slate-600 uppercase font-bold">Service</div>
+                              <div className="text-xs font-bold text-indigo-300">{selectedTrace?.service || "—"}</div>
+                            </div>
+                            <div>
+                              <div className="text-[8px] text-slate-600 uppercase font-bold">Route / Target</div>
+                              <div className="text-[10px] font-mono text-slate-300 break-all">{selectedTrace?.route || "—"}</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                          <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Key Signals</h6>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(() => {
+                              const flags = selectedTrace?.rule_flags || {};
+                              const pills = RULE_PILLS
+                                .map(p => ({ ...p, active: !!flags[p.key], meta: flags[p.metaKey] }))
+                                .filter(p => p.active);
+                              if (!pills.length) return <span className="text-[10px] text-slate-600 italic">ML ensemble detection</span>;
+                              return pills.map(p => {
+                                const detail = p.fmt(p.meta);
+                                return (
+                                  <span key={p.key} className={cn("text-[9px] font-bold px-2 py-0.5 rounded border", PILL_COLOR[p.color])}>
+                                    {p.label}{detail ? ` ${detail}` : ""}
+                                  </span>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                          <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Severity</h6>
+                          {(() => {
+                            const score = selectedTrace?.anomaly_score ?? 0;
+                            const level = score >= 0.8 ? "Critical" : score >= 0.5 ? "Warning" : "Low Risk";
+                            const color = score >= 0.8 ? "text-rose-400" : score >= 0.5 ? "text-amber-400" : "text-emerald-400";
+                            return (
+                              <div className="space-y-2">
+                                <div className={cn("text-2xl font-black", color)}>{score.toFixed(2)}</div>
+                                <div className={cn("text-[10px] font-black uppercase tracking-widest", color)}>{level}</div>
+                                <div className="text-[9px] text-slate-500">{selectedTrace?.anomaly_type || "Unclassified"}</div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                      )}
 
                       <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
                         <button onClick={() => setSelectedTrace(null)} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-white transition-colors">Dismiss</button>
@@ -1063,6 +1276,11 @@ export default function App() {
                         </pre>
                       </div>
                     </div>
+                  ) : activeTab === "AI Analysis" ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-4 text-slate-500">
+                      <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                      <p className="text-sm font-medium animate-pulse">Preparing incident context…</p>
+                    </div>
                   ) : (
                     <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">
                       Select a tab to view data.
@@ -1082,7 +1300,410 @@ export default function App() {
         <div className="mt-8">
           <PIIRedactionPanel backendUrl={BACKEND_URL} />
         </div>
+        </>
+        )}
       </main>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TRANSACTIONS VIEW — universal real-time payment monitoring
+// ═══════════════════════════════════════════════════════════════════
+
+const PAYMENT_ANOMALY_TYPES = new Set(["Payment Failure Spike", "Gateway Timeout", "Fraud Velocity", "Duplicate Charge"]);
+
+const METHOD_ICON = {
+  UPI: Zap, CREDIT_CARD: CreditCard, DEBIT_CARD: CreditCard,
+  NET_BANKING: Globe, WALLET: Wallet, BANK_TRANSFER: Server, BNPL: Clock3,
+};
+
+function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInvestigate }) {
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [methodFilter, setMethodFilter] = useState("All");
+
+  const filteredTxns = useMemo(() => {
+    let list = txns;
+    if (statusFilter !== "All") list = list.filter(t => t.status === statusFilter);
+    if (methodFilter !== "All") list = list.filter(t => t.method === methodFilter);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(t =>
+        (t.txn_id || "").toLowerCase().includes(q) ||
+        (t.order_id || "").toLowerCase().includes(q) ||
+        (t.provider || "").toLowerCase().includes(q) ||
+        (t.gateway || "").toLowerCase().includes(q) ||
+        (t.method || "").toLowerCase().includes(q));
+    }
+    return list.slice(0, 30);
+  }, [txns, statusFilter, methodFilter, searchQuery]);
+
+  const paymentIncidents = useMemo(
+    () => anomalies.filter(a => PAYMENT_ANOMALY_TYPES.has(a.anomaly_type)).slice(0, 4),
+    [anomalies]
+  );
+
+  const successRateSeries = series.map(p => p.success_rate);
+  const tpsSeries = series.map(p => p.tps);
+  const failedSeries = series.map(p => p.failedDelta);
+  const volumeSeries = series.map(p => p.volumeDelta);
+  const lastVolumeDelta = series.length ? series[series.length - 1].volumeDelta : 0;
+  const lastTps = series.length ? series[series.length - 1].tps : 0;
+  const flowData = series.slice(-40).map(p => ({ time: p.time, success: p.successDelta, failed: p.failedDelta }));
+  const methodMax = Math.max(1, ...(stats?.method_breakdown || []).map(m => m.count));
+
+  return (
+    <div className="space-y-8 animate-in fade-in">
+      {/* KPI cards */}
+      <div className="grid grid-cols-4 gap-6">
+        <StatCard label="Success Rate" value={stats ? `${(stats.success_rate ?? 0).toFixed(1)}%` : "—"}
+          trend={stats ? `${(stats.success ?? 0).toLocaleString("en-IN")} OK` : "—"} color="emerald" series={successRateSeries} />
+        <StatCard label="Volume Processed" value={stats ? fmtINRCompact(stats.volume_inr ?? 0) : "—"}
+          trend={lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE"} color="indigo" series={volumeSeries} />
+        <StatCard label="Transactions" value={stats ? (stats.total ?? 0).toLocaleString("en-IN") : "—"}
+          trend={`${lastTps} TPS`} color="amber" series={tpsSeries} />
+        <StatCard label="Failed" value={stats ? (stats.failed ?? 0).toLocaleString("en-IN") : "—"}
+          trend={stats?.top_failure_reasons?.[0]?.failure_reason || "—"} color="rose" series={failedSeries} />
+      </div>
+
+      {/* Charts row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            Payment Flow (per second)
+          </h3>
+          <div className="h-56">
+            {flowData.length < 2 ? (
+              <div className="h-full flex items-center justify-center text-xs text-slate-600">Collecting live data…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={flowData}>
+                  <defs>
+                    <linearGradient id="flow-ok" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="flow-fail" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.5} />
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                  <XAxis dataKey="time" stroke="#475569" fontSize={9} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#475569" fontSize={9} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} />
+                  <Area type="monotone" dataKey="success" stackId="1" stroke="#10b981" strokeWidth={2} fill="url(#flow-ok)" isAnimationActive={false} name="Success" />
+                  <Area type="monotone" dataKey="failed" stackId="1" stroke="#f43f5e" strokeWidth={2} fill="url(#flow-fail)" isAnimationActive={false} name="Failed" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 space-y-5">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
+            <BarChart3 className="w-4 h-4 text-indigo-400" />
+            Method &amp; Gateway Health
+          </h3>
+          <div className="space-y-2.5">
+            {(stats?.method_breakdown || []).map(m => {
+              const Icon = METHOD_ICON[m.method] || CreditCard;
+              const okPct = m.count > 0 ? (m.success / m.count) * 100 : 0;
+              return (
+                <div key={m.method} className="flex items-center gap-3">
+                  <Icon className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                  <span className="text-[11px] text-slate-300 font-bold w-28 flex-shrink-0">{m.method}</span>
+                  <div className="flex-1 h-2 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
+                    <div className="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 rounded-full transition-all duration-700"
+                      style={{ width: `${(m.count / methodMax) * 100}%` }} />
+                  </div>
+                  <span className="text-[10px] text-slate-500 tabular-nums w-12 text-right">{m.count}</span>
+                  <span className={cn("text-[10px] font-bold tabular-nums w-14 text-right",
+                    okPct >= 90 ? "text-emerald-400" : okPct >= 75 ? "text-amber-400" : "text-rose-400")}>
+                    {okPct.toFixed(0)}% ok
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="pt-4 border-t border-slate-800 grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-2">Top Failure Reasons</div>
+              <div className="space-y-1">
+                {(stats?.top_failure_reasons || []).slice(0, 4).map(f => (
+                  <div key={f.failure_reason} className="flex justify-between text-[10px]">
+                    <span className="text-rose-300 font-mono truncate pr-2">{f.failure_reason}</span>
+                    <span className="text-slate-500 tabular-nums">{f.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-2">Gateway Failure Rate</div>
+              <div className="space-y-1">
+                {(stats?.gateway_breakdown || []).slice(0, 4).map(g => {
+                  const failPct = g.count > 0 ? (g.failed / g.count) * 100 : 0;
+                  return (
+                    <div key={g.gateway} className="flex justify-between text-[10px]">
+                      <span className="text-slate-300 truncate pr-2">{g.gateway}</span>
+                      <span className={cn("font-bold tabular-nums", failPct > 15 ? "text-rose-400" : "text-emerald-400")}>
+                        {failPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Active payment incidents */}
+      {paymentIncidents.length > 0 && (
+        <div className="bg-rose-950/20 border border-rose-500/20 rounded-2xl p-5">
+          <h3 className="text-xs font-black uppercase tracking-widest text-rose-400 flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4" />
+            Active Payment Incidents
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {paymentIncidents.map((a, i) => {
+              const st = styleFor(a.anomaly_type);
+              return (
+                <button key={a.id ?? `${a.trace_id}-${i}`} onClick={() => onInvestigate(a)}
+                  className="text-left bg-slate-900/60 border border-slate-800 hover:border-rose-500/40 rounded-xl p-3 transition-all group">
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", st.text, st.bg, st.border)}>
+                      {a.anomaly_type}
+                    </span>
+                    <span className="text-[9px] text-slate-500">{new Date(a.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="text-xs text-slate-300 mt-1.5 font-medium">{a.service} <span className="text-slate-500">→ {a.route}</span></div>
+                  <div className="text-[9px] text-indigo-400 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">Click to investigate →</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Live transaction feed */}
+      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
+            <Activity className="w-4 h-4 text-emerald-400" />
+            Live Transaction Feed
+            <span className="flex items-center gap-1.5 ml-2 text-[9px] font-black text-emerald-500 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> streaming
+            </span>
+          </h3>
+          <div className="flex items-center gap-2">
+            {["All", "SUCCESS", "FAILED", "PENDING"].map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={cn("px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all",
+                  statusFilter === s
+                    ? (TXN_STATUS_STYLE[s] || "bg-indigo-500/10 text-indigo-300 border-indigo-500/30")
+                    : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300")}>
+                {s}
+              </button>
+            ))}
+            <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+              {["All", "UPI", "CREDIT_CARD", "DEBIT_CARD", "NET_BANKING", "WALLET", "BANK_TRANSFER", "BNPL"].map(m => (
+                <option key={m} value={m}>{m === "All" ? "All Methods" : m}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-slate-800">
+          <span>Time</span><span>Transaction</span><span>Type</span><span>Method / Provider</span><span>Gateway</span><span className="text-right">Amount</span><span className="text-right">Latency</span><span className="text-right">Status</span>
+        </div>
+        <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-slate-800/40">
+          {filteredTxns.length === 0 ? (
+            <div className="text-center py-12 text-slate-600 text-xs">No transactions match the current filters.</div>
+          ) : (
+            filteredTxns.map(t => <TxnRow key={t.txn_id} txn={t} />)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TxnRow({ txn }) {
+  const Icon = METHOD_ICON[txn.method] || CreditCard;
+  return (
+    <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 py-2.5 items-center hover:bg-slate-800/30 transition-colors animate-in fade-in slide-in-from-top-1">
+      <span className="text-[10px] text-slate-500 tabular-nums font-mono">{new Date(txn.timestamp).toLocaleTimeString()}</span>
+      <div className="min-w-0">
+        <div className="text-[11px] font-mono text-indigo-300 truncate">{txn.txn_id}</div>
+        <div className="text-[9px] text-slate-600 font-mono truncate">{txn.order_id} · {txn.user}</div>
+      </div>
+      <span className="text-[9px] font-bold text-slate-400 uppercase">{txn.txn_type}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Icon className="w-3 h-3 text-slate-500 flex-shrink-0" />
+        <span className="text-[10px] text-slate-300 truncate">{txn.provider}</span>
+      </div>
+      <span className="text-[10px] text-slate-500 truncate">{txn.gateway}</span>
+      <span className="text-[11px] font-bold text-slate-100 tabular-nums text-right">{fmtAmount(txn.amount, txn.currency)}</span>
+      <span className={cn("text-[10px] tabular-nums text-right", (txn.latency_ms ?? 0) > 3000 ? "text-rose-400" : "text-slate-500")}>
+        {(txn.latency_ms ?? 0).toFixed(0)}ms
+      </span>
+      <div className="text-right">
+        <span className={cn("inline-block text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", TXN_STATUS_STYLE[txn.status] || "bg-slate-500/10 text-slate-400 border-slate-500/30")}>
+          {txn.status}
+        </span>
+        {txn.status === "FAILED" && txn.failure_reason && (
+          <div className="text-[8px] text-rose-400/70 font-mono mt-0.5 truncate" title={txn.failure_reason}>{txn.failure_reason}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// KUBERNETES VIEW — live cluster state
+// ═══════════════════════════════════════════════════════════════════
+
+function K8sBar({ pct, danger = 80 }) {
+  return (
+    <div className="flex-1 h-2 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
+      <div className={cn("h-full rounded-full transition-all duration-700",
+        pct >= danger ? "bg-gradient-to-r from-rose-600 to-rose-400" :
+        pct >= danger * 0.75 ? "bg-gradient-to-r from-amber-600 to-amber-400" :
+        "bg-gradient-to-r from-emerald-600 to-emerald-400")}
+        style={{ width: `${Math.min(100, pct)}%` }} />
+    </div>
+  );
+}
+
+function podAge(startedAt) {
+  const mins = Math.max(0, (Date.now() - new Date(startedAt).getTime()) / 60000);
+  if (mins < 1) return "<1m";
+  if (mins < 60) return `${Math.floor(mins)}m`;
+  return `${Math.floor(mins / 60)}h${Math.floor(mins % 60)}m`;
+}
+
+function KubernetesView({ k8s }) {
+  if (!k8s) {
+    return (
+      <div className="py-24 text-center text-slate-600 text-sm">
+        <div className="w-8 h-8 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3" />
+        Connecting to cluster…
+      </div>
+    );
+  }
+  const s = k8s.summary;
+  return (
+    <div className="space-y-8 animate-in fade-in">
+      {/* Cluster KPIs */}
+      <div className="grid grid-cols-4 gap-6">
+        {[
+          { label: "Nodes Ready", value: `${s.nodes_ready}/${s.nodes_total}`, trend: "Healthy", color: "emerald" },
+          { label: "Pods Running", value: `${s.pods_running}/${s.pods_total}`, trend: `${s.total_restarts} restarts`, color: s.pods_running === s.pods_total ? "emerald" : "rose" },
+          { label: "Cluster CPU", value: `${s.cluster_cpu_pct}%`, trend: s.cluster_cpu_pct > 80 ? "Critical" : "Normal", color: "indigo" },
+          { label: "Cluster Memory", value: `${s.cluster_mem_pct}%`, trend: s.cluster_mem_pct > 80 ? "Pressure" : "Normal", color: "amber" },
+        ].map(c => (
+          <div key={c.label} className="bg-slate-900/40 border border-slate-800/50 p-6 rounded-2xl">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{c.label}</div>
+            <div className="text-2xl font-black text-white">{c.value}</div>
+            <div className={cn("text-[10px] font-black uppercase tracking-widest mt-2 inline-block px-2 py-0.5 rounded",
+              statCardColorMap[c.color] || "text-slate-400 bg-slate-400/10")}>{c.trend}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Nodes */}
+      <div className="grid grid-cols-3 gap-6">
+        {k8s.nodes.map(n => (
+          <div key={n.name} className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-indigo-400" />
+                <span className="text-sm font-bold text-slate-200">{n.name}</span>
+              </div>
+              <span className="text-[9px] text-slate-500 font-mono">{n.zone}</span>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-400">
+              <span className="w-10">CPU</span>
+              <K8sBar pct={n.cpu_pct} />
+              <span className="tabular-nums w-24 text-right">{n.cpu_used_m}m / {n.cpu_capacity_m}m</span>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-400">
+              <span className="w-10">MEM</span>
+              <K8sBar pct={n.mem_pct} />
+              <span className="tabular-nums w-24 text-right">{(n.mem_used_mi / 1024).toFixed(1)}Gi / {(n.mem_capacity_mi / 1024).toFixed(0)}Gi</span>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <div className="flex gap-1.5">
+                {n.conditions.map(c => (
+                  <span key={c} className={cn("text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border",
+                    c === "Ready" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : "bg-rose-500/10 text-rose-400 border-rose-500/30")}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+              <span className="text-[10px] text-slate-500">{n.pods} pods</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pods + Events */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-8">
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
+            <Boxes className="w-4 h-4 text-indigo-400" />
+            Pods <span className="text-slate-500 font-medium">({k8s.pods.length})</span>
+          </h3>
+          <div className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-slate-800">
+            <span>Pod</span><span>Node</span><span>Status</span><span className="text-right">↻</span><span className="text-right">CPU</span><span className="text-right">Mem</span><span className="text-right">Age</span>
+          </div>
+          <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-slate-800/40">
+            {k8s.pods.map(p => (
+              <div key={p.name} className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 py-2 items-center hover:bg-slate-800/30 transition-colors">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono text-slate-300 truncate" title={p.name}>{p.name}</div>
+                  <div className="text-[9px] text-slate-600">{p.deployment}</div>
+                </div>
+                <span className="text-[9px] text-slate-500 font-mono truncate">{p.node}</span>
+                <span className={cn("text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border text-center",
+                  K8S_STATUS_STYLE[p.status] || "bg-slate-500/10 text-slate-400 border-slate-500/30")}>
+                  {p.status}
+                </span>
+                <span className={cn("text-[10px] tabular-nums text-right", p.restarts > 3 ? "text-rose-400 font-bold" : "text-slate-500")}>{p.restarts}</span>
+                <span className="text-[10px] text-slate-400 tabular-nums text-right">{Math.round(p.cpu_m)}m</span>
+                <span className="text-[10px] text-slate-400 tabular-nums text-right">{Math.round(p.mem_mi)}Mi</span>
+                <span className="text-[10px] text-slate-500 tabular-nums text-right">{podAge(p.started_at)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
+            <FileText className="w-4 h-4 text-amber-400" />
+            Cluster Events
+          </h3>
+          <div className="max-h-[460px] overflow-y-auto custom-scrollbar space-y-1.5">
+            {(k8s.events || []).length === 0 ? (
+              <div className="text-center py-12 text-slate-600 text-xs">No recent events.</div>
+            ) : (
+              k8s.events.map((e, i) => (
+                <div key={i} className="flex items-start gap-2 py-1.5 px-2 rounded-md hover:bg-slate-800/40 text-[10px] font-mono">
+                  <span className="text-slate-600 flex-shrink-0 w-16 tabular-nums">{new Date(e.timestamp).toLocaleTimeString()}</span>
+                  <span className={cn("flex-shrink-0 w-16 text-center rounded px-1 py-0.5 text-[8px] font-black uppercase",
+                    e.type === "Warning" ? "text-amber-400 bg-amber-400/10" : "text-emerald-400 bg-emerald-400/10")}>
+                    {e.type}
+                  </span>
+                  <span className="text-indigo-400 flex-shrink-0 w-24 truncate">{e.reason}</span>
+                  <span className="text-slate-400 flex-1 leading-relaxed">{e.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1119,17 +1740,17 @@ function AnomalyRow({ item, onClick }) {
 }
 
 function PIIRedactionPanel({ backendUrl }) {
-  const [series, setSeries] = useState({ "api-gateway": [], "python-service": [] });
+  const [series, setSeries] = useState({ "api-gateway": [], "payment-service": [] });
 
   useEffect(() => {
     let cancelled = false;
     const fetchAll = async () => {
       try {
-        const [gw, py] = await Promise.all([
+        const [gw, pay] = await Promise.all([
           fetch(`${backendUrl}/api/metrics/api-gateway/redaction_count`).then(r => r.ok ? r.json() : []),
-          fetch(`${backendUrl}/api/metrics/python-service/redaction_count`).then(r => r.ok ? r.json() : []),
+          fetch(`${backendUrl}/api/metrics/payment-service/redaction_count`).then(r => r.ok ? r.json() : []),
         ]);
-        if (!cancelled) setSeries({ "api-gateway": gw, "python-service": py });
+        if (!cancelled) setSeries({ "api-gateway": gw, "payment-service": pay });
       } catch {}
     };
     fetchAll();
@@ -1151,7 +1772,7 @@ function PIIRedactionPanel({ backendUrl }) {
 
   const latest = {
     gw: series["api-gateway"].slice(-1)[0]?.value ?? 0,
-    py: series["python-service"].slice(-1)[0]?.value ?? 0,
+    py: series["payment-service"].slice(-1)[0]?.value ?? 0,
   };
   const total = (latest.gw + latest.py).toFixed(0);
 
@@ -1193,7 +1814,7 @@ function PIIRedactionPanel({ backendUrl }) {
               <YAxis stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} />
               <Area type="monotone" dataKey="api-gateway" stroke="#10b981" strokeWidth={2} fill="url(#redact-gw)" isAnimationActive={false} />
-              <Area type="monotone" dataKey="python-service" stroke="#818cf8" strokeWidth={2} fill="url(#redact-py)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="payment-service" stroke="#818cf8" strokeWidth={2} fill="url(#redact-py)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         )}
@@ -1260,10 +1881,11 @@ const statCardColorMap = {
   indigo: "text-indigo-400 bg-indigo-400/10",
   rose: "text-rose-400 bg-rose-400/10",
   emerald: "text-emerald-400 bg-emerald-400/10",
+  amber: "text-amber-400 bg-amber-400/10",
 };
 
 function StatCard({ label, value, trend, color, series }) {
-  const stroke = color === 'indigo' ? '#6366f1' : color === 'rose' ? '#f43f5e' : '#10b981';
+  const stroke = color === 'indigo' ? '#6366f1' : color === 'rose' ? '#f43f5e' : color === 'amber' ? '#f59e0b' : '#10b981';
   const gradId = `spark-grad-${color}`;
   const hasData = Array.isArray(series) && series.length >= 2;
   const sparkPath = hasData

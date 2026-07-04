@@ -100,9 +100,57 @@ sequenceDiagram
 3. **Explore the Dashboard**
    Open your browser at: `http://localhost:5173`
 
+## ☁️ Free Deployment (Hugging Face Spaces)
+
+The dashboard backend ships with a built-in telemetry simulator, so the full
+real-time experience (live metrics, anomaly alerts, trace forensics, AI RCA)
+runs in a single free Docker container — no RabbitMQ/Bytewax/Collector needed.
+
+1. Create a **write** token at https://huggingface.co/settings/tokens
+2. Run:
+   ```bash
+   py deploy/deploy_hf.py --token hf_xxxxxxxx
+   ```
+   The script builds the React dashboard, assembles the Space files, creates
+   the Space (`<your-username>/monoxai`), sets `GEMINI_API_KEY` from
+   `dashboard/backend/.env` as a private Space secret, and uploads everything.
+3. Wait ~2–4 min for the Space to build, then open
+   `https://huggingface.co/spaces/<your-username>/monoxai`
+
+Re-run the same command any time to redeploy after changes.
+
 ## ✨ Key Features (Phase 5)
 - **AI RCA**: Instant root cause analysis with suggested fixes.
 - **Trace Waterfall**: Multi-service visualization reconstructed in flight.
 - **Sparkline Wave**: Real-time throughput and latency trends.
 - **Resource Saturation**: Live CPU and Memory tracking.
 - **Sidebar Controls**: Production-grade toggles for Live Mode and Auto-Correlation.
+
+## 💳 Phase 6 — Universal Transaction Monitoring
+- **Live transaction feed**: every transaction type (purchase, refund, payout, subscription, transfer, top-up) across UPI, credit/debit cards, net banking, wallets, bank transfers (NEFT/IMPS/RTGS), and BNPL, streamed in real time.
+- **Payment KPIs**: success rate, INR volume (compact ₹ L/Cr), live TPS, failure counts — with sparklines.
+- **Gateway health**: per-gateway failure rates (Razorpay, Stripe, PayU, CCAvenue, Cashfree, JusPay) and top failure reasons.
+- **Payment incidents**: failure-rate storms, gateway timeouts, fraud velocity, duplicate charges — each with AI root-cause analysis.
+
+## 💰 Real Payment Monitoring (webhooks)
+The transaction feed can ingest **real gateway events** instead of (or alongside) simulated ones:
+
+1. **Razorpay**: in the Razorpay dashboard → Settings → Webhooks, add
+   `https://<your-app-url>/api/webhooks/razorpay` with events `payment.captured`,
+   `payment.failed`, `refund.processed`, and a webhook secret. Set the same value
+   as the `RAZORPAY_WEBHOOK_SECRET` secret on your deployment.
+2. **Stripe**: add `https://<your-app-url>/api/webhooks/stripe` in Stripe →
+   Developers → Webhooks (events `payment_intent.succeeded`,
+   `payment_intent.payment_failed`, `charge.refunded`) and set
+   `STRIPE_WEBHOOK_SECRET` to the signing secret (`whsec_...`).
+3. **Anything else**: `POST /api/ingest/transaction` with header
+   `X-API-Key: <INGEST_API_KEY>` and a JSON body (`amount`, `method`, `status`, ...).
+
+All webhooks are HMAC signature-verified. Set `TXN_SIMULATOR=off` to show only
+real transactions. Works with gateway **test mode** (free, no KYC) and live mode alike.
+
+## ☸️ Phase 6 — Kubernetes Monitoring
+- **Live cluster view**: 3 nodes, ~18 pods across 6 deployments with real-time CPU/memory, restarts, and pod phases (Running / Pending / CrashLoopBackOff / OOMKilled).
+- **Event stream**: scheduling, scaling (HPA), back-off, and OOM events.
+- **K8s anomalies**: CrashLoopBackOff and OOMKilled alerts land in the incident stream with pod/node context and kubectl-level RCA suggestions.
+- **Real manifests**: `k8s/` contains production-style Deployment/Service/HPA manifests to run the dashboard on an actual cluster (see [k8s/README.md](k8s/README.md)).
