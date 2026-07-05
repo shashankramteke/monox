@@ -1373,11 +1373,23 @@ const METHOD_ICON = {
 function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInvestigate }) {
   const [statusFilter, setStatusFilter] = useState("All");
   const [methodFilter, setMethodFilter] = useState("All");
+  const [gatewayFilter, setGatewayFilter] = useState("All");
+
+  // Gateway options: union of gateways seen in the stats breakdown and the
+  // currently loaded feed, so real (Razorpay/Stripe/custom) gateways appear
+  // automatically the moment they show up.
+  const gatewayOptions = useMemo(() => {
+    const set = new Set();
+    (stats?.gateway_breakdown || []).forEach(g => g.gateway && set.add(g.gateway));
+    txns.forEach(t => t.gateway && set.add(t.gateway));
+    return ["All", ...[...set].sort()];
+  }, [stats, txns]);
 
   const filteredTxns = useMemo(() => {
     let list = txns;
     if (statusFilter !== "All") list = list.filter(t => t.status === statusFilter);
     if (methodFilter !== "All") list = list.filter(t => t.method === methodFilter);
+    if (gatewayFilter !== "All") list = list.filter(t => t.gateway === gatewayFilter);
     const tokens = searchQuery.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
     if (tokens.length) {
       list = list.filter(t => {
@@ -1387,7 +1399,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
       });
     }
     return list.slice(0, 30);
-  }, [txns, statusFilter, methodFilter, searchQuery]);
+  }, [txns, statusFilter, methodFilter, gatewayFilter, searchQuery]);
 
   const paymentIncidents = useMemo(
     () => anomalies.filter(a => PAYMENT_ANOMALY_TYPES.has(a.anomaly_type)).slice(0, 4),
@@ -1564,8 +1576,35 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
                 <option key={m} value={m}>{m === "All" ? "All Methods" : m}</option>
               ))}
             </select>
+            <select value={gatewayFilter} onChange={e => setGatewayFilter(e.target.value)}
+              className={cn("border rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500",
+                gatewayFilter === "All" ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-indigo-500/10 border-indigo-500/40 text-indigo-300 font-bold")}>
+              {gatewayOptions.map(g => (
+                <option key={g} value={g}>{g === "All" ? "All Gateways" : g}</option>
+              ))}
+            </select>
           </div>
         </div>
+        {gatewayFilter !== "All" && (() => {
+          const g = (stats?.gateway_breakdown || []).find(x => x.gateway === gatewayFilter);
+          const failPct = g && g.count ? (g.failed / g.count) * 100 : 0;
+          return (
+            <div className="flex items-center gap-2 mb-2 text-[10px]">
+              <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 font-bold text-indigo-300">
+                {gatewayFilter} only
+              </span>
+              {g && (
+                <>
+                  <span className="text-slate-500">{g.count} txns</span>
+                  <span className={cn("font-bold", failPct > 15 ? "text-rose-400" : "text-emerald-400")}>
+                    {failPct.toFixed(1)}% failed
+                  </span>
+                </>
+              )}
+              <button onClick={() => setGatewayFilter("All")} className="text-slate-500 hover:text-slate-300 ml-1">clear</button>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-slate-800">
           <span>Time</span><span>Transaction</span><span>Type</span><span>Method / Provider</span><span>Gateway</span><span className="text-right">Amount</span><span className="text-right">Latency</span><span className="text-right">Status</span>
         </div>
