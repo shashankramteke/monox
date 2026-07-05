@@ -260,7 +260,7 @@ export default function App() {
         } else if (msg.type === "metric_update") {
           setMetrics(prev => [...prev, msg.data].slice(-600));
         } else if (msg.type === "new_transaction") {
-          setTxns(prev => [msg.data, ...prev].slice(0, 60));
+          setTxns(prev => [msg.data, ...prev].slice(0, 200));
         } else if (msg.type === "txn_stats") {
           const d = msg.data;
           setTxnStats(prev => ({ ...(prev || {}), ...d }));
@@ -511,7 +511,7 @@ export default function App() {
   const loadTxnAndK8s = async ({ force = false } = {}) => {
     try {
       const [txnData, statsData, k8sData] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/transactions?limit=50`).then(r => r.ok ? r.json() : []),
+        fetch(`${BACKEND_URL}/api/transactions?limit=200`).then(r => r.ok ? r.json() : []),
         fetch(`${BACKEND_URL}/api/transactions/stats`).then(r => r.ok ? r.json() : null),
         fetch(`${BACKEND_URL}/api/k8s/cluster`).then(r => r.ok ? r.json() : null),
       ]);
@@ -1415,18 +1415,46 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
   const flowData = series.slice(-40).map(p => ({ time: p.time, success: p.successDelta, failed: p.failedDelta }));
   const methodMax = Math.max(1, ...(stats?.method_breakdown || []).map(m => m.count));
 
+  // KPI values — global by default, but rescoped to the selected gateway so
+  // picking "Razorpay" makes the whole top row reflect Razorpay only.
+  const scoped = gatewayFilter !== "All";
+  const gwRow = scoped ? (stats?.gateway_breakdown || []).find(g => g.gateway === gatewayFilter) : null;
+  const kpi = scoped
+    ? {
+        total: gwRow?.count ?? 0,
+        success: gwRow?.success ?? 0,
+        failed: gwRow?.failed ?? 0,
+        volume: gwRow?.volume ?? 0,
+        successRate: gwRow?.count ? ((gwRow.success ?? 0) / gwRow.count) * 100 : 0,
+      }
+    : {
+        total: stats?.total ?? 0,
+        success: stats?.success ?? 0,
+        failed: stats?.failed ?? 0,
+        volume: stats?.volume_inr ?? 0,
+        successRate: stats?.success_rate ?? 0,
+      };
+
   return (
     <div className="space-y-8 animate-in fade-in">
+      {scoped && (
+        <div className="flex items-center gap-3 -mb-2">
+          <span className="text-xs font-black uppercase tracking-widest text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 px-3 py-1 rounded-lg">
+            {gatewayFilter} — dedicated view
+          </span>
+          <button onClick={() => setGatewayFilter("All")} className="text-[11px] text-slate-500 hover:text-slate-300 font-bold">← back to all gateways</button>
+        </div>
+      )}
       {/* KPI cards */}
       <div className="grid grid-cols-4 gap-6">
-        <StatCard label="Success Rate" value={stats ? `${(stats.success_rate ?? 0).toFixed(1)}%` : "—"}
-          trend={stats ? `${(stats.success ?? 0).toLocaleString("en-IN")} OK` : "—"} color="emerald" series={successRateSeries} />
-        <StatCard label="Volume Processed" value={stats ? fmtINRCompact(stats.volume_inr ?? 0) : "—"}
-          trend={lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE"} color="indigo" series={volumeSeries} />
-        <StatCard label="Transactions" value={stats ? (stats.total ?? 0).toLocaleString("en-IN") : "—"}
-          trend={`${lastTps} TPS`} color="amber" series={tpsSeries} />
-        <StatCard label="Failed" value={stats ? (stats.failed ?? 0).toLocaleString("en-IN") : "—"}
-          trend={stats?.top_failure_reasons?.[0]?.failure_reason || "—"} color="rose" series={failedSeries} />
+        <StatCard label={scoped ? `${gatewayFilter} Success Rate` : "Success Rate"} value={`${(kpi.successRate ?? 0).toFixed(1)}%`}
+          trend={`${(kpi.success ?? 0).toLocaleString("en-IN")} OK`} color="emerald" series={scoped ? [] : successRateSeries} />
+        <StatCard label={scoped ? `${gatewayFilter} Volume` : "Volume Processed"} value={fmtINRCompact(kpi.volume ?? 0)}
+          trend={scoped ? `${gatewayFilter}` : (lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE")} color="indigo" series={scoped ? [] : volumeSeries} />
+        <StatCard label={scoped ? `${gatewayFilter} Transactions` : "Transactions"} value={(kpi.total ?? 0).toLocaleString("en-IN")}
+          trend={scoped ? `${(kpi.total ? (kpi.failed / kpi.total * 100) : 0).toFixed(1)}% failed` : `${lastTps} TPS`} color="amber" series={scoped ? [] : tpsSeries} />
+        <StatCard label={scoped ? `${gatewayFilter} Failed` : "Failed"} value={(kpi.failed ?? 0).toLocaleString("en-IN")}
+          trend={stats?.top_failure_reasons?.[0]?.failure_reason || "—"} color="rose" series={scoped ? [] : failedSeries} />
       </div>
 
       {/* Charts row */}

@@ -1141,7 +1141,10 @@ class SQLiteStorage(TelemetryStorage):
             )).fetchall()
             gateway_rows = await (await db.execute(
                 "SELECT gateway, COUNT(*) AS count, "
-                "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed "
+                "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success, "
+                "SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending, "
+                "SUM(CASE WHEN status = 'SUCCESS' AND currency = 'INR' THEN amount ELSE 0 END) AS volume "
                 "FROM transactions GROUP BY gateway ORDER BY count DESC"
             )).fetchall()
             avg_row = await (await db.execute(
