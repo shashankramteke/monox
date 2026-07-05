@@ -28,16 +28,26 @@ def run(cmd, cwd=None):
     subprocess.run(cmd, cwd=cwd, check=True, shell=(os.name == "nt"))
 
 
-def read_gemini_key():
+def read_env_value(key):
     env_file = BACKEND / ".env"
     if not env_file.exists():
         return None
     for line in env_file.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line.startswith("GEMINI_API_KEY=") and not line.startswith("#"):
+        if line.startswith(f"{key}=") and not line.startswith("#"):
             val = line.split("=", 1)[1].strip()
             return val or None
     return None
+
+
+def read_gemini_key():
+    return read_env_value("GEMINI_API_KEY")
+
+
+# Secrets pushed to the Space if present in dashboard/backend/.env
+SPACE_SECRET_KEYS = [
+    "GEMINI_API_KEY", "RAZORPAY_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET", "INGEST_API_KEY",
+]
 
 
 def main():
@@ -136,16 +146,20 @@ def main():
             "Create a 'Write' token at https://huggingface.co/settings/tokens and re-run.\n"
             f"\nDetails: {type(e).__name__}: {e}"
         )
-    gemini_key = read_gemini_key()
-    if gemini_key:
+    any_secret = False
+    for key in SPACE_SECRET_KEYS:
+        val = read_env_value(key)
+        if not val:
+            continue
+        any_secret = True
         try:
-            api.add_space_secret(repo_id=space_id, key="GEMINI_API_KEY", value=gemini_key)
-            print("      GEMINI_API_KEY set as private Space secret (AI RCA enabled)")
+            api.add_space_secret(repo_id=space_id, key=key, value=val)
+            print(f"      {key} set as private Space secret")
         except Exception as e:
-            print(f"      WARNING: could not set the GEMINI_API_KEY secret automatically ({type(e).__name__}).")
+            print(f"      WARNING: could not set {key} automatically ({type(e).__name__}).")
             print(f"      Set it manually: https://huggingface.co/spaces/{space_id}/settings -> Variables and secrets")
-    else:
-        print("      No GEMINI_API_KEY found in dashboard/backend/.env — heuristic RCA fallback will be used")
+    if not any_secret:
+        print("      No secrets found in dashboard/backend/.env (heuristic RCA fallback; simulated payments)")
 
     # 4. Upload
     print("[4/4] Uploading files ...")

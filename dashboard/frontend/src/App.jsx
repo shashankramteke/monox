@@ -154,6 +154,8 @@ export default function App() {
   const [status, setStatus] = useState("connecting");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+  const [appConfig, setAppConfig] = useState(null);
   const ws = useRef(null);
   const liveModeRef = useRef(liveMode);
   const unmountedRef = useRef(false);
@@ -277,6 +279,10 @@ export default function App() {
           });
         } else if (msg.type === "k8s_update") {
           setK8s(msg.data);
+        } else if (msg.type === "mode_change") {
+          setAppConfig(prev => ({ ...(prev || {}), real_only: msg.data.real_only, real_payments_seen: true }));
+          setToast("🟢 Real payment detected — switched to REAL-ONLY mode");
+          setTimeout(() => setToast(null), 4000);
         } else if (msg.type === "history") {
           setAnomalies(msg.data);
         }
@@ -475,19 +481,21 @@ export default function App() {
     };
   }, [anomalies]);
 
-  // Filtered anomalies for search + anomaliesOnly toggle
+  // Filtered anomalies for search + anomaliesOnly toggle.
+  // Tokenized match: each whitespace-separated token must appear somewhere,
+  // so "razor pay" matches "Razorpay" and word order/spacing doesn't matter.
   const filteredAnomalies = useMemo(() => {
     let filtered = anomalies;
     if (anomaliesOnly) {
       filtered = filtered.filter(a => a.is_anomaly);
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(a =>
-        (a.service || "").toLowerCase().includes(q) ||
-        (a.route || "").toLowerCase().includes(q) ||
-        (a.trace_id || "").toLowerCase().includes(q)
-      );
+    const tokens = searchQuery.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    if (tokens.length) {
+      filtered = filtered.filter(a => {
+        const hay = [a.service, a.route, a.trace_id, a.anomaly_type, (a.reasons || []).join(" "),
+          a.rule_flags?.gateway].filter(Boolean).join(" ").toLowerCase().replace(/\s+/g, "");
+        return tokens.every(t => hay.includes(t.replace(/\s+/g, "")));
+      });
     }
     return filtered;
   }, [anomalies, anomaliesOnly, searchQuery]);
@@ -497,25 +505,39 @@ export default function App() {
     fetchHistory();
   }, [selectedService, monitoringMode]);
 
-  // Initial + periodic sync of transactions and K8s state (WS keeps it live;
-  // this covers first paint and reconnects).
+  // Sync transactions + K8s state. `force` overwrites the live-streamed feed
+  // (used by the Refresh button); the periodic call is gentle and only fills
+  // gaps so it never fights the WebSocket stream.
+  const loadTxnAndK8s = async ({ force = false } = {}) => {
+    try {
+      const [txnData, statsData, k8sData] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/transactions?limit=50`).then(r => r.ok ? r.json() : []),
+        fetch(`${BACKEND_URL}/api/transactions/stats`).then(r => r.ok ? r.json() : null),
+        fetch(`${BACKEND_URL}/api/k8s/cluster`).then(r => r.ok ? r.json() : null),
+      ]);
+      setTxns(prev => (force || prev.length <= 5 ? txnData : prev));
+      if (statsData) setTxnStats(prev => ({ ...(prev || {}), ...statsData }));
+      if (k8sData) setK8s(k8sData);
+    } catch { /* backend not ready yet */ }
+  };
+
+  // Refresh everything at once (header refresh button).
+  const refreshAll = async () => {
+    setToast("Refreshing live data…");
+    await Promise.all([fetchHistory(), loadTxnAndK8s({ force: true })]);
+    setToast("Data refreshed");
+    setTimeout(() => setToast(null), 1500);
+  };
+
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      try {
-        const [txnData, statsData, k8sData] = await Promise.all([
-          fetch(`${BACKEND_URL}/api/transactions?limit=50`).then(r => r.ok ? r.json() : []),
-          fetch(`${BACKEND_URL}/api/transactions/stats`).then(r => r.ok ? r.json() : null),
-          fetch(`${BACKEND_URL}/api/k8s/cluster`).then(r => r.ok ? r.json() : null),
-        ]);
-        if (cancelled) return;
-        setTxns(prev => (prev.length > 5 ? prev : txnData));
-        if (statsData) setTxnStats(prev => ({ ...(prev || {}), ...statsData }));
-        if (k8sData) setK8s(k8sData);
-      } catch { /* backend not ready yet */ }
+    const tick = () => {
+      if (cancelled) return;
+      loadTxnAndK8s();
+      fetch(`${BACKEND_URL}/api/config`).then(r => r.ok ? r.json() : null).then(c => { if (c && !cancelled) setAppConfig(c); }).catch(() => {});
     };
-    load();
-    const id = setInterval(load, 20000);
+    tick();
+    const id = setInterval(tick, 20000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
@@ -628,6 +650,19 @@ export default function App() {
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               <span className="text-[10px] font-black text-emerald-500 uppercase">Production</span>
             </div>
+            {appConfig?.real_only ? (
+              <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 px-2 py-1 rounded-md" title={`Live payments only${appConfig.last_gateway ? " · " + appConfig.last_gateway : ""}`}>
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-[10px] font-black text-green-400 uppercase">Real Payments</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-md" title={appConfig?.integrations?.razorpay ? "Razorpay linked — waiting for first real payment" : "Demo data — link a gateway to go live"}>
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                <span className="text-[10px] font-black text-amber-500 uppercase">
+                  {appConfig?.integrations?.razorpay || appConfig?.integrations?.stripe ? "Awaiting Live" : "Demo Data"}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex-1 max-w-md mx-8 relative">
@@ -642,15 +677,24 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="px-3 py-1.5 bg-slate-950 rounded-full border border-slate-800 text-xs flex items-center gap-2">
-              <div className={cn("w-2 h-2 rounded-full", status === "connected" ? "bg-emerald-500 animate-pulse" : "bg-red-500")} />
-              <span className="text-slate-400 uppercase font-black text-[9px]">{liveMode ? "Live" : "Paused"}</span>
-            </div>
-            <button onClick={fetchHistory} className="relative p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors" title="Refresh data">
+            <button
+              onClick={() => { setLiveMode(m => !m); setToast(liveMode ? "Live updates paused" : "Live updates resumed"); setTimeout(() => setToast(null), 1500); }}
+              title={liveMode ? "Pause live updates" : "Resume live updates"}
+              className={cn("px-3 py-1.5 rounded-full border text-xs flex items-center gap-2 transition-all",
+                liveMode ? "bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20" : "bg-slate-950 border-slate-800 hover:border-slate-700")}
+            >
+              <div className={cn("w-2 h-2 rounded-full", liveMode && status === "connected" ? "bg-emerald-500 animate-pulse" : liveMode ? "bg-amber-500" : "bg-slate-500")} />
+              <span className={cn("uppercase font-black text-[9px]", liveMode ? "text-emerald-400" : "text-slate-400")}>{liveMode ? "Live" : "Paused"}</span>
+            </button>
+            <button onClick={refreshAll} className="relative p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors" title="Refresh all data">
               <RefreshCcw className="w-4 h-4" />
             </button>
             <button
-              onClick={() => { if (anomalies.length > 0) runRCA(anomalies[0]); }}
+              onClick={() => {
+                const target = filteredAnomalies[0] || anomalies[0];
+                if (target) { runRCA(target); }
+                else { setToast("No incidents to analyze yet — waiting for anomalies"); setTimeout(() => setToast(null), 2500); }
+              }}
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
             >
               <Brain className="w-4 h-4" />
@@ -1303,6 +1347,14 @@ export default function App() {
         </>
         )}
       </main>
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 text-xs font-bold text-slate-200 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -1326,14 +1378,13 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
     let list = txns;
     if (statusFilter !== "All") list = list.filter(t => t.status === statusFilter);
     if (methodFilter !== "All") list = list.filter(t => t.method === methodFilter);
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(t =>
-        (t.txn_id || "").toLowerCase().includes(q) ||
-        (t.order_id || "").toLowerCase().includes(q) ||
-        (t.provider || "").toLowerCase().includes(q) ||
-        (t.gateway || "").toLowerCase().includes(q) ||
-        (t.method || "").toLowerCase().includes(q));
+    const tokens = searchQuery.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    if (tokens.length) {
+      list = list.filter(t => {
+        const hay = [t.txn_id, t.order_id, t.provider, t.gateway, t.method, t.txn_type, t.status, t.currency]
+          .filter(Boolean).join(" ").toLowerCase().replace(/\s+/g, "");
+        return tokens.every(tok => hay.includes(tok.replace(/\s+/g, "")));
+      });
     }
     return list.slice(0, 30);
   }, [txns, statusFilter, methodFilter, searchQuery]);

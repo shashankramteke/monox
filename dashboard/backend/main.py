@@ -32,14 +32,23 @@ load_dotenv()
 # SIMULATOR=off        → disable the whole telemetry simulator
 # TXN_SIMULATOR=off    → disable only simulated transactions (real
 #                        webhook/ingested transactions still flow)
+# AUTO_REAL_ONLY=off   → keep simulating even after real payments arrive
+#                        (default ON: the first real payment silences the
+#                        transaction simulator so the feed is real-only)
 # RAZORPAY_WEBHOOK_SECRET / STRIPE_WEBHOOK_SECRET → enable gateway webhooks
 # INGEST_API_KEY       → enable the generic POST /api/ingest/transaction
 _off = ("off", "0", "false", "no")
 SIMULATOR_ENABLED = os.getenv("SIMULATOR", "on").lower() not in _off
 TXN_SIMULATOR_ENABLED = os.getenv("TXN_SIMULATOR", "on").lower() not in _off
+AUTO_REAL_ONLY = os.getenv("AUTO_REAL_ONLY", "on").lower() not in _off
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 INGEST_API_KEY = os.getenv("INGEST_API_KEY")
+
+# Runtime flag: flips True the moment a real payment is ingested. When
+# AUTO_REAL_ONLY is on, this permanently silences simulated transactions so
+# the dashboard shows only genuine payments once you go live.
+REAL_PAYMENTS_SEEN = {"active": False, "count": 0, "last_gateway": None, "since": None}
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -666,8 +675,11 @@ async def _simulator_loop():
                 logger.info(f"🔒 Simulated PII density alert for {svc} (ratio={ratio})")
 
             # ── 5. Universal transaction stream ───────────────────────
+            # Simulate transactions only while no real payments are flowing
+            # (AUTO_REAL_ONLY silences the simulator once you go live).
+            sim_txn = TXN_SIMULATOR_ENABLED and not (AUTO_REAL_ONLY and REAL_PAYMENTS_SEEN["active"])
             # Failure storm lifecycle
-            if TXN_SIMULATOR_ENABLED and tick > storm_until and random.random() < 0.012:
+            if sim_txn and tick > storm_until and random.random() < 0.012:
                 storm_until = tick + random.randint(15, 35)
                 storm_gateway = random.choice(TXN_GATEWAYS)
                 storm_rate = round(random.uniform(0.30, 0.55), 2)
@@ -688,9 +700,10 @@ async def _simulator_loop():
             in_storm = tick <= storm_until
             failure_rate = storm_rate if in_storm else 0.05
 
-            tick_txns = random.randint(2, 5) if TXN_SIMULATOR_ENABLED else 0
+            tick_txns = random.randint(2, 5) if sim_txn else 0
             for _ in range(tick_txns):
                 txn = _gen_transaction(now, failure_rate, storm_gateway if in_storm else None)
+                txn["source"] = "sim"
                 await storage.save_transaction(txn)
                 await broadcast({"type": "new_transaction", "data": txn})
 
@@ -701,7 +714,7 @@ async def _simulator_loop():
             await broadcast({"type": "txn_stats", "data": txn_stats})
 
             # Occasional payment-specific anomalies
-            pay_roll = random.random() if TXN_SIMULATOR_ENABLED else 1.0
+            pay_roll = random.random() if sim_txn else 1.0
             if pay_roll < 0.02:  # Gateway timeout
                 gw = storm_gateway if in_storm else random.choice(TXN_GATEWAYS)
                 flags = dict(BASE_RULE_FLAGS)
@@ -896,9 +909,14 @@ class SQLiteStorage(TelemetryStorage):
                     latency_ms REAL,
                     failure_reason TEXT,
                     user TEXT,
-                    timestamp TEXT
+                    timestamp TEXT,
+                    source TEXT DEFAULT 'sim'
                 )
             """)
+            try:
+                await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT DEFAULT 'sim'")
+            except Exception:
+                pass
             await db.execute("CREATE INDEX IF NOT EXISTS idx_txn_status ON transactions(status)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_txn_method ON transactions(method)")
             await db.execute("""
@@ -1047,11 +1065,11 @@ class SQLiteStorage(TelemetryStorage):
         await self._ensure_db()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT INTO transactions (txn_id, order_id, txn_type, method, provider, gateway, amount, currency, status, latency_ms, failure_reason, user, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO transactions (txn_id, order_id, txn_type, method, provider, gateway, amount, currency, status, latency_ms, failure_reason, user, timestamp, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (txn["txn_id"], txn["order_id"], txn["txn_type"], txn["method"], txn["provider"],
                  txn["gateway"], txn["amount"], txn["currency"], txn["status"], txn["latency_ms"],
-                 txn.get("failure_reason"), txn["user"], txn["timestamp"])
+                 txn.get("failure_reason"), txn["user"], txn["timestamp"], txn.get("source", "sim"))
             )
             # Cumulative counters (survive row retention below)
             await db.execute(
@@ -1337,6 +1355,25 @@ async def get_transactions(status: Optional[str] = None, method: Optional[str] =
 async def get_transaction_stats():
     return await storage.get_txn_stats()
 
+@app.get("/api/config")
+async def get_config():
+    """Expose runtime mode + which real-payment integrations are wired,
+    so the UI can show a REAL/DEMO badge and setup hints."""
+    return {
+        "real_only": bool(AUTO_REAL_ONLY and REAL_PAYMENTS_SEEN["active"]),
+        "real_payments_seen": REAL_PAYMENTS_SEEN["active"],
+        "real_payment_count": REAL_PAYMENTS_SEEN["count"],
+        "last_gateway": REAL_PAYMENTS_SEEN["last_gateway"],
+        "since": REAL_PAYMENTS_SEEN["since"],
+        "auto_real_only": AUTO_REAL_ONLY,
+        "txn_simulator": TXN_SIMULATOR_ENABLED,
+        "integrations": {
+            "razorpay": bool(RAZORPAY_WEBHOOK_SECRET),
+            "stripe": bool(STRIPE_WEBHOOK_SECRET),
+            "generic_ingest": bool(INGEST_API_KEY),
+        },
+    }
+
 # --- REAL PAYMENT INGESTION (gateway webhooks + generic API) ---
 # These endpoints turn the dashboard into a live monitor for REAL
 # transactions: point Razorpay/Stripe webhooks at them, or push
@@ -1345,6 +1382,16 @@ async def get_transaction_stats():
 async def _ingest_transaction(txn: Dict):
     """Persist and broadcast a normalized transaction from a real source."""
     txn.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    txn["source"] = "live"
+    # Flip into real-only mode on the first genuine payment.
+    first_real = not REAL_PAYMENTS_SEEN["active"]
+    REAL_PAYMENTS_SEEN["active"] = True
+    REAL_PAYMENTS_SEEN["count"] += 1
+    REAL_PAYMENTS_SEEN["last_gateway"] = txn.get("gateway")
+    REAL_PAYMENTS_SEEN["since"] = REAL_PAYMENTS_SEEN["since"] or txn["timestamp"]
+    if first_real and AUTO_REAL_ONLY:
+        logger.info("🟢 First real payment received — simulator switched to REAL-ONLY mode")
+        await broadcast({"type": "mode_change", "data": {"real_only": True, "since": REAL_PAYMENTS_SEEN["since"]}})
     await storage.save_transaction(txn)
     await broadcast({"type": "new_transaction", "data": txn})
     stats = await storage.get_txn_counters()

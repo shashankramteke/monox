@@ -146,8 +146,30 @@ The transaction feed can ingest **real gateway events** instead of (or alongside
 3. **Anything else**: `POST /api/ingest/transaction` with header
    `X-API-Key: <INGEST_API_KEY>` and a JSON body (`amount`, `method`, `status`, ...).
 
-All webhooks are HMAC signature-verified. Set `TXN_SIMULATOR=off` to show only
-real transactions. Works with gateway **test mode** (free, no KYC) and live mode alike.
+All webhooks are HMAC signature-verified. Works with gateway **test mode**
+(free, no KYC) and live mode alike.
+
+### Automatic real-only mode
+By default (`AUTO_REAL_ONLY=on`) the dashboard **stops simulating transactions
+the moment the first real payment arrives** — the header badge flips from
+`Demo Data` → `Awaiting Live` (once a gateway secret is set) → `Real Payments`,
+and from then on the feed shows only genuine payments. Each row is tagged
+`source: "sim" | "live"`. Check current mode any time at `GET /api/config`.
+
+### Link Razorpay in 4 steps (test mode, free)
+1. Create a free account at razorpay.com and stay in **Test Mode**.
+2. On your deployment, set two secrets: `RAZORPAY_WEBHOOK_SECRET` (any strong
+   string you choose) and `INGEST_API_KEY` (optional, for custom pushes).
+3. In Razorpay → **Settings → Webhooks → Add New Webhook**:
+   - URL: `https://<your-space>.hf.space/api/webhooks/razorpay`
+   - Secret: the exact value of `RAZORPAY_WEBHOOK_SECRET`
+   - Active events: `payment.captured`, `payment.failed`, `refund.processed`
+4. Create a **Payment Link** in Razorpay and pay it with a test card/UPI — it
+   appears in your live feed within seconds and the app switches to real-only.
+
+Going live for real money: complete Razorpay KYC, switch the dashboard + webhook
+to Live Mode. Razorpay (the licensed entity) moves the money on its own secure
+page — this app only *monitors* the events, so no PCI burden falls on you.
 
 ## ☸️ Phase 6 — Kubernetes Monitoring
 - **Live cluster view**: 3 nodes, ~18 pods across 6 deployments with real-time CPU/memory, restarts, and pod phases (Running / Pending / CrashLoopBackOff / OOMKilled).
