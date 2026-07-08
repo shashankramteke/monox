@@ -62,12 +62,12 @@ const ANOMALY_STYLE = {
   "Statistical Outlier (LOF)":        { text: "text-cyan-300", bg: "bg-cyan-500/15", border: "border-cyan-500/30", dot: "bg-cyan-500" },
   "Statistical Outlier (Isolation Forest)": { text: "text-teal-300", bg: "bg-teal-500/15", border: "border-teal-500/30", dot: "bg-teal-500" },
   "Reconstruction Anomaly (Autoencoder)":   { text: "text-pink-300", bg: "bg-pink-500/15", border: "border-pink-500/30", dot: "bg-pink-500" },
-  "Boundary Anomaly (SVM)":           { text: "text-violet-300", bg: "bg-violet-500/15", border: "border-violet-500/30", dot: "bg-violet-500" },
+  "Boundary Anomaly (SVM)":           { text: "text-teal-300", bg: "bg-teal-500/15", border: "border-teal-500/30", dot: "bg-teal-500" },
   "ML Ensemble Anomaly":              { text: "text-blue-300", bg: "bg-blue-500/15", border: "border-blue-500/30", dot: "bg-blue-500" },
   "Unclassified Anomaly":             { text: "text-slate-300", bg: "bg-slate-500/15", border: "border-slate-500/30", dot: "bg-slate-500" },
   "Payment Failure Spike":            { text: "text-rose-300", bg: "bg-rose-600/15", border: "border-rose-600/30", dot: "bg-rose-600" },
   "Gateway Timeout":                  { text: "text-amber-300", bg: "bg-amber-500/15", border: "border-amber-500/30", dot: "bg-amber-500" },
-  "Fraud Velocity":                   { text: "text-fuchsia-300", bg: "bg-fuchsia-500/15", border: "border-fuchsia-500/30", dot: "bg-fuchsia-500" },
+  "Fraud Velocity":                   { text: "text-lime-300", bg: "bg-lime-500/15", border: "border-lime-500/30", dot: "bg-lime-500" },
   "Duplicate Charge":                 { text: "text-orange-300", bg: "bg-orange-500/15", border: "border-orange-500/30", dot: "bg-orange-500" },
   "Pod CrashLoopBackOff":             { text: "text-red-300", bg: "bg-red-600/15", border: "border-red-600/30", dot: "bg-red-600" },
   "Pod OOMKilled":                    { text: "text-rose-300", bg: "bg-rose-500/15", border: "border-rose-500/30", dot: "bg-rose-500" },
@@ -83,7 +83,7 @@ const RULE_PILLS = [
   { key: "pii_density",      label: "PII Density",      metaKey: "redaction_ratio",  fmt: (v) => v > 0 ? `${Math.round(v * 100)}%` : null, color: "purple" },
   { key: "payment_failure",  label: "Failure Spike",    metaKey: "failure_rate",     fmt: (v) => v > 0 ? `${Math.round(v * 100)}%` : null, color: "red" },
   { key: "gateway_timeout",  label: "Gateway Timeout",  metaKey: "gateway",          fmt: (v) => v || null, color: "amber" },
-  { key: "fraud_velocity",   label: "Fraud Velocity",   metaKey: "txn_per_min",      fmt: (v) => v > 0 ? `${v}/min` : null, color: "fuchsia" },
+  { key: "fraud_velocity",   label: "Fraud Velocity",   metaKey: "txn_per_min",      fmt: (v) => v > 0 ? `${v}/min` : null, color: "lime" },
   { key: "duplicate_charge", label: "Duplicate Charge", metaKey: "dup_txn_id",       fmt: (v) => v ? `#${String(v).slice(0, 10)}` : null, color: "orange" },
   { key: "k8s_pod",          label: "K8s Pod",          metaKey: "k8s_restarts",     fmt: (v) => v > 0 ? `${v} restarts` : null, color: "sky" },
 ];
@@ -92,7 +92,7 @@ const PILL_COLOR = {
   amber:  "bg-amber-500/10 text-amber-300 border-amber-500/30",
   red:    "bg-red-500/10 text-red-300 border-red-500/30",
   purple: "bg-purple-500/10 text-purple-300 border-purple-500/30",
-  fuchsia: "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30",
+  lime: "bg-lime-500/10 text-lime-300 border-lime-500/30",
   sky:    "bg-sky-500/10 text-sky-300 border-sky-500/30",
 };
 
@@ -541,15 +541,43 @@ export default function App() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // Interactive layer: cursor-following spotlight on every glass card and a
+  // subtle 3D tilt on KPI tiles (.tilt). Drives the CSS vars used in index.css.
+  useEffect(() => {
+    const move = (e) => {
+      const card = e.target.closest?.(".glass-card");
+      if (!card) return;
+      const r = card.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      card.style.setProperty("--mx", `${x}px`);
+      card.style.setProperty("--my", `${y}px`);
+      if (card.classList.contains("tilt")) {
+        card.style.setProperty("--rx", `${((0.5 - y / r.height) * 7).toFixed(2)}deg`);
+        card.style.setProperty("--ry", `${((x / r.width - 0.5) * 7).toFixed(2)}deg`);
+      }
+    };
+    const reset = (e) => {
+      const card = e.target.closest?.(".tilt");
+      if (card) { card.style.setProperty("--rx", "0deg"); card.style.setProperty("--ry", "0deg"); }
+    };
+    document.addEventListener("pointermove", move, { passive: true });
+    document.addEventListener("pointerout", reset, { passive: true });
+    return () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerout", reset);
+    };
+  }, []);
+
   return (
     <div className="relative flex min-h-screen text-slate-100 font-sans">
-      {/* Animated aurora background */}
+      {/* Animated aurora background + floating particles */}
       <div className="aurora-bg" />
+      <div className="particles" />
 
       {/* Sidebar */}
-      <aside className="relative z-10 w-64 border-r border-white/5 bg-slate-950/40 backdrop-blur-xl p-6 flex flex-col gap-8">
+      <aside className="relative z-10 w-64 border-r border-white/5 bg-[#02110f]/40 backdrop-blur-xl p-6 flex flex-col gap-8">
         <div className="flex items-center gap-3">
-          <div className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 via-violet-600 to-fuchsia-600 glow-indigo">
+          <div className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-cyan-500 via-teal-600 to-lime-600 glow-cyan">
             <Activity className="w-5 h-5" />
           </div>
           <span className="text-xl font-black tracking-tight text-gradient">MonoXAI</span>
@@ -568,14 +596,14 @@ export default function App() {
                 onClick={() => setView(name)}
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center justify-between group",
-                  view === name ? "bg-gradient-to-r from-indigo-500/20 to-fuchsia-500/10 text-indigo-200 font-bold border border-indigo-500/30 glow-indigo" : "text-slate-400 hover:bg-white/5 border border-transparent"
+                  view === name ? "bg-gradient-to-r from-cyan-500/20 to-lime-500/10 text-cyan-200 font-bold border border-cyan-500/30 glow-cyan" : "text-slate-400 hover:bg-white/5 border border-transparent"
                 )}
               >
                 <div className="flex items-center gap-2">
                   <Icon className="w-4 h-4" />
                   {name}
                 </div>
-                {view === name && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
+                {view === name && <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
               </button>
             ))}
           </div>
@@ -590,14 +618,14 @@ export default function App() {
                 onClick={() => setSelectedService(svc)}
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center justify-between group",
-                  selectedService === svc ? "bg-gradient-to-r from-indigo-500/20 to-fuchsia-500/10 text-indigo-200 font-bold border border-indigo-500/30 glow-indigo" : "text-slate-400 hover:bg-white/5 border border-transparent"
+                  selectedService === svc ? "bg-gradient-to-r from-cyan-500/20 to-lime-500/10 text-cyan-200 font-bold border border-cyan-500/30 glow-cyan" : "text-slate-400 hover:bg-white/5 border border-transparent"
                 )}
               >
                 <div className="flex items-center gap-2">
                   <Server className="w-4 h-4" />
                   {svc}
                 </div>
-                {selectedService === svc && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
+                {selectedService === svc && <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
               </button>
             ))}
           </div>
@@ -611,10 +639,10 @@ export default function App() {
             <Toggle label="Auto-Correlation" active={autoCorrelation} onClick={() => setAutoCorrelation(!autoCorrelation)} />
           </div>
 
-          <div className={cn("border p-4 rounded-xl mt-6", aiInsight.hasAnomaly ? "bg-rose-600/10 border-rose-500/20" : "bg-indigo-600/10 border-indigo-500/20")}>
+          <div className={cn("border p-4 rounded-xl mt-6", aiInsight.hasAnomaly ? "bg-rose-600/10 border-rose-500/20" : "bg-cyan-600/10 border-cyan-500/20")}>
             <div className="flex items-center gap-2 mb-2">
-              <div className={cn("w-1.5 h-1.5 rounded-full", aiInsight.hasAnomaly ? "bg-rose-500 animate-ping" : "bg-indigo-500")} />
-              <span className={cn("text-[10px] uppercase font-black tracking-widest", aiInsight.hasAnomaly ? "text-rose-400" : "text-indigo-400")}>AI Insight</span>
+              <div className={cn("w-1.5 h-1.5 rounded-full", aiInsight.hasAnomaly ? "bg-rose-500 animate-ping" : "bg-cyan-500")} />
+              <span className={cn("text-[10px] uppercase font-black tracking-widest", aiInsight.hasAnomaly ? "text-rose-400" : "text-cyan-400")}>AI Insight</span>
             </div>
             <p className="text-[11px] text-slate-300 leading-relaxed">
               {aiInsight.text}
@@ -630,12 +658,12 @@ export default function App() {
           </div>
         </div>
 
-        <div className="mt-auto space-y-4 pt-6 border-t border-slate-800/50">
+        <div className="mt-auto space-y-4 pt-6 border-t border-teal-900/40">
           <label className="text-[10px] uppercase font-black tracking-widest text-slate-500">Monitoring Mode</label>
           <select
             value={monitoringMode}
             onChange={(e) => setMonitoringMode(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 rounded-md p-2 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="w-full bg-teal-950 border border-slate-700 rounded-md p-2 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option>SRE (Standard)</option>
             <option>N+1 Detection</option>
@@ -675,7 +703,7 @@ export default function App() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by service, route, or trace ID..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+              className="w-full bg-[#02110f] border border-teal-900/50 rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-all"
             />
           </div>
 
@@ -684,12 +712,12 @@ export default function App() {
               onClick={() => { setLiveMode(m => !m); setToast(liveMode ? "Live updates paused" : "Live updates resumed"); setTimeout(() => setToast(null), 1500); }}
               title={liveMode ? "Pause live updates" : "Resume live updates"}
               className={cn("px-3 py-1.5 rounded-full border text-xs flex items-center gap-2 transition-all",
-                liveMode ? "bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20" : "bg-slate-950 border-slate-800 hover:border-slate-700")}
+                liveMode ? "bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20" : "bg-[#02110f] border-teal-900/50 hover:border-slate-700")}
             >
               <div className={cn("w-2 h-2 rounded-full", liveMode && status === "connected" ? "bg-emerald-500 animate-pulse" : liveMode ? "bg-amber-500" : "bg-slate-500")} />
               <span className={cn("uppercase font-black text-[9px]", liveMode ? "text-emerald-400" : "text-slate-400")}>{liveMode ? "Live" : "Paused"}</span>
             </button>
-            <button onClick={refreshAll} className="relative p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors" title="Refresh all data">
+            <button onClick={refreshAll} className="relative p-2 bg-[#02110f] border border-teal-900/50 rounded-lg text-slate-400 hover:text-white transition-colors" title="Refresh all data">
               <RefreshCcw className="w-4 h-4" />
             </button>
             <button
@@ -706,6 +734,8 @@ export default function App() {
           </div>
         </header>
 
+        {/* Keyed wrapper re-animates the whole view on every switch */}
+        <div key={view} className="view-anim">
         {view === "Transactions" ? (
           <TransactionsView
             txns={txns}
@@ -721,7 +751,7 @@ export default function App() {
         <>
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-6 mb-8">
-          <StatCard label="Throughput" value={summaryStats.throughput} trend={summaryStats.throughputTrend} icon={<Activity className="text-indigo-400" />} color="indigo" series={summaryStats.throughputSeries} delay={0} />
+          <StatCard label="Throughput" value={summaryStats.throughput} trend={summaryStats.throughputTrend} icon={<Activity className="text-cyan-400" />} color="cyan" series={summaryStats.throughputSeries} delay={0} />
           <StatCard label="P99 Latency" value={summaryStats.p99} trend={summaryStats.latencyTrend} icon={<Clock3 className="text-rose-400" />} color="rose" series={summaryStats.p99Series} delay={90} />
           <StatCard label="Anomaly Rate" value={summaryStats.errorRate} trend={stats.total_traces > 0 ? `${stats.anomaly_count}/${stats.total_traces}` : "Normal"} icon={<Shield className="text-emerald-400" />} color="emerald" series={summaryStats.anomalySeries} delay={180} />
         </div>
@@ -730,12 +760,12 @@ export default function App() {
         <div className="glass-card p-6 mb-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
-              <BarChart3 className="w-4 h-4 text-indigo-400" />
+              <BarChart3 className="w-4 h-4 text-cyan-400" />
               {chartLabel}
             </h3>
             <div className="flex gap-2 text-[10px] text-slate-500">
               <span className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                <div className="w-2 h-2 rounded-full bg-cyan-500" />
                 {getMetricTypeForMode(monitoringMode) === "redaction_count" ? "Redactions" : "P99 Latency (ms)"}
               </span>
             </div>
@@ -745,24 +775,24 @@ export default function App() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#0f3d38" />
                 <XAxis
                   dataKey="time"
-                  stroke="#475569"
+                  stroke="#4b7d76"
                   fontSize={10}
                   tickLine={false}
                   axisLine={false}
                 />
-                <YAxis stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
+                <YAxis stroke="#4b7d76" fontSize={10} axisLine={false} tickLine={false} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }}
-                  itemStyle={{ color: '#818cf8', fontWeight: 'bold' }}
+                  contentStyle={{ backgroundColor: '#04201e', border: '1px solid #134e4a', borderRadius: '8px' }}
+                  itemStyle={{ color: '#67e8f9', fontWeight: 'bold' }}
                 />
-                <Area type="monotone" dataKey="val" stroke="#818cf8" strokeWidth={3} fillOpacity={1} fill="url(#colorVal)" />
+                <Area type="monotone" dataKey="val" stroke="#67e8f9" strokeWidth={3} fillOpacity={1} fill="url(#colorVal)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -778,7 +808,7 @@ export default function App() {
             <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-1">
               {isLoading ? (
                 <div className="text-center py-12 text-slate-600 text-sm">
-                  <div className="w-8 h-8 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3" />
+                  <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mx-auto mb-3" />
                   Loading incidents...
                 </div>
               ) : filteredAnomalies.length === 0 ? (
@@ -801,7 +831,7 @@ export default function App() {
               Diagnostic Center
             </h3>
             {selectedTrace ? (
-              <div className="glass-morphism rounded-2xl p-6 border border-slate-800 animate-in fade-in slide-in-from-bottom-2 min-h-[500px] flex flex-col">
+              <div className="glass-morphism rounded-2xl p-6 border border-teal-900/50 animate-in fade-in slide-in-from-bottom-2 min-h-[500px] flex flex-col">
                 <div className="flex justify-between items-start mb-6">
                   {(() => {
                     const ts = styleFor(selectedTrace.anomaly_type);
@@ -817,13 +847,13 @@ export default function App() {
                       </div>
                     );
                   })()}
-                  <button onClick={() => setSelectedTrace(null)} className="p-1 hover:bg-slate-800 rounded-full transition-colors">
+                  <button onClick={() => setSelectedTrace(null)} className="p-1 hover:bg-teal-900/50 rounded-full transition-colors">
                     <X className="w-4 h-4 text-slate-500" />
                   </button>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex gap-6 border-b border-slate-800 mb-6">
+                <div className="flex gap-6 border-b border-teal-900/50 mb-6">
                   {["Overview", "Traces", "Logs", "Metrics", "Scores", "AI Analysis"].map(tab => (
                     <button
                       key={tab}
@@ -834,7 +864,7 @@ export default function App() {
                       )}
                     >
                       {tab}
-                      {activeTab === tab && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
+                      {activeTab === tab && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-cyan-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />}
                     </button>
                   ))}
                 </div>
@@ -842,15 +872,15 @@ export default function App() {
                 <div className="flex-1">
                   {isAnalyzing ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 text-slate-500">
-                      <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                      <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
                       <p className="text-sm font-medium animate-pulse">Consulting AI Assistant...</p>
                     </div>
                   ) : activeTab === "AI Analysis" && analysis ? (
                     <div className="space-y-8 animate-in fade-in duration-500">
-                      <div className="relative p-6 bg-indigo-600/5 border border-indigo-500/20 rounded-2xl overflow-hidden">
+                      <div className="relative p-6 bg-cyan-600/5 border border-cyan-500/20 rounded-2xl overflow-hidden">
                         <div className="absolute top-0 right-0 p-4 opacity-10"><Brain size={80} /></div>
-                        <h5 className="text-indigo-400 text-xs font-black uppercase tracking-widest flex items-center gap-2 mb-4">
-                          <Zap size={14} className="fill-indigo-400" /> Root Cause Analysis
+                        <h5 className="text-cyan-400 text-xs font-black uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <Zap size={14} className="fill-cyan-400" /> Root Cause Analysis
                         </h5>
                         <p className="text-lg font-bold text-slate-100 leading-tight mb-4 tracking-tight">
                           ✨ {analysis.root_cause}
@@ -861,12 +891,12 @@ export default function App() {
                             <ul className="space-y-2">
                               {Array.isArray(analysis.suggested_fixes) ? analysis.suggested_fixes.map((f, i) => (
                                 <li key={i} className="text-xs text-slate-400 flex items-start gap-2">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1 flex-shrink-0" />
+                                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 flex-shrink-0" />
                                   {f}
                                 </li>
                               )) : (
                                 <li className="text-xs text-slate-400 flex items-start gap-2">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1 flex-shrink-0" />
+                                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 flex-shrink-0" />
                                   {analysis.suggested_fixes}
                                 </li>
                               )}
@@ -874,7 +904,7 @@ export default function App() {
                           </div>
                           <div className="space-y-3">
                             <h6 className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Risk Prediction</h6>
-                            <p className="text-xs text-slate-400 leading-relaxed bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                            <p className="text-xs text-slate-400 leading-relaxed bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50">
                               {analysis.risk_prediction}
                             </p>
                           </div>
@@ -885,11 +915,11 @@ export default function App() {
                           otherwise incident context (payments / K8s / PII). */}
                       {(analysis.traceData?.spans?.length ?? 0) > 0 ? (
                       <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Timeline</h6>
-                          <div className="h-2 bg-slate-800 rounded-full relative overflow-hidden">
+                          <div className="h-2 bg-teal-900/50 rounded-full relative overflow-hidden">
                             {analysis.traceData?.spans?.map((s, i) => (
-                              <div key={i} className={cn("absolute h-full rounded-full", s.type === "API" ? "bg-indigo-500" : s.type === "DATABASE" ? "bg-rose-500" : "bg-emerald-500")}
+                              <div key={i} className={cn("absolute h-full rounded-full", s.type === "API" ? "bg-cyan-500" : s.type === "DATABASE" ? "bg-rose-500" : "bg-emerald-500")}
                                 style={{
                                   left: `${((s.start || 0) / (analysis.traceData.duration_ms || 1)) * 100}%`,
                                   width: `${Math.max(4, ((s.duration || 0) / (analysis.traceData.duration_ms || 1)) * 100)}%`,
@@ -902,25 +932,25 @@ export default function App() {
                             <span>{(analysis.traceData?.duration_ms ?? 0).toFixed(0)}ms</span>
                           </div>
                         </div>
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Affected Services</h6>
                           <div className="flex items-center justify-center gap-2 flex-wrap">
                             {[...new Set(analysis.traceData?.spans?.map(s => s.service) || [])].map((svc, i, arr) => (
                               <React.Fragment key={svc}>
                                 <div className={cn("px-2 py-1 rounded text-[8px] font-bold border",
-                                  i === arr.length - 1 ? "bg-rose-500/20 border-rose-500/50 text-rose-300" : "bg-slate-800 border-slate-700 text-slate-400"
+                                  i === arr.length - 1 ? "bg-rose-500/20 border-rose-500/50 text-rose-300" : "bg-teal-900/50 border-slate-700 text-slate-400"
                                 )}>{svc}</div>
                                 {i < arr.length - 1 && <div className="w-3 h-px bg-slate-700" />}
                               </React.Fragment>
                             ))}
                           </div>
                         </div>
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Span Breakdown</h6>
                           <div className="space-y-1.5">
                             {(analysis.traceData?.spans || []).slice(0, 4).map((s, i) => (
                               <div key={i} className="flex items-center gap-2">
-                                <div className={cn("h-1 rounded-full", s.type === "API" ? "bg-indigo-500" : s.type === "DATABASE" ? "bg-rose-500" : "bg-emerald-500")}
+                                <div className={cn("h-1 rounded-full", s.type === "API" ? "bg-cyan-500" : s.type === "DATABASE" ? "bg-rose-500" : "bg-emerald-500")}
                                   style={{ width: `${Math.max(10, ((s.duration || 0) / (analysis.traceData.duration_ms || 1)) * 100)}%` }} />
                                 <span className="text-[7px] text-slate-500 flex-shrink-0">{(s.duration || 0).toFixed(0)}ms</span>
                               </div>
@@ -930,12 +960,12 @@ export default function App() {
                       </div>
                       ) : (
                       <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Incident Source</h6>
                           <div className="space-y-2">
                             <div>
                               <div className="text-[8px] text-slate-600 uppercase font-bold">Service</div>
-                              <div className="text-xs font-bold text-indigo-300">{selectedTrace?.service || "—"}</div>
+                              <div className="text-xs font-bold text-cyan-300">{selectedTrace?.service || "—"}</div>
                             </div>
                             <div>
                               <div className="text-[8px] text-slate-600 uppercase font-bold">Route / Target</div>
@@ -943,7 +973,7 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Key Signals</h6>
                           <div className="flex flex-wrap gap-1.5">
                             {(() => {
@@ -963,7 +993,7 @@ export default function App() {
                             })()}
                           </div>
                         </div>
-                        <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl">
+                        <div className="bg-teal-950/60 border border-teal-900/50 p-4 rounded-xl">
                           <h6 className="text-[9px] font-black text-slate-500 uppercase mb-3">Severity</h6>
                           {(() => {
                             const score = selectedTrace?.anomaly_score ?? 0;
@@ -981,7 +1011,7 @@ export default function App() {
                       </div>
                       )}
 
-                      <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                      <div className="flex justify-end gap-3 pt-4 border-t border-teal-900/50">
                         <button onClick={() => setSelectedTrace(null)} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-white transition-colors">Dismiss</button>
                         <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(analysis, null, 2)); alert("Analysis copied to clipboard — ticket created (demo mode)"); }} className="px-6 py-2 bg-white text-slate-950 text-xs font-black uppercase tracking-tight rounded-lg hover:bg-slate-200 transition-colors">Create Ticket</button>
                       </div>
@@ -999,11 +1029,11 @@ export default function App() {
                               <span className="text-slate-300 font-bold">{span.service} <span className="text-slate-500 font-medium">| {span.name}</span></span>
                               <span className="text-slate-500 tabular-nums">{span.duration.toFixed(1)}ms</span>
                             </div>
-                            <div className="h-2 bg-slate-900 rounded-full relative overflow-hidden ring-1 ring-slate-800">
+                            <div className="h-2 bg-teal-950 rounded-full relative overflow-hidden ring-1 ring-teal-900/60">
                               <div
                                 className={cn(
                                   "absolute h-full rounded-full transition-all duration-1000",
-                                  span.type === "API" ? "bg-indigo-500" : span.type === "DATABASE" ? "bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" : "bg-emerald-500"
+                                  span.type === "API" ? "bg-cyan-500" : span.type === "DATABASE" ? "bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" : "bg-emerald-500"
                                 )}
                                 style={{
                                   left: `${(span.start / traceContext.duration_ms) * 100}%`,
@@ -1047,7 +1077,7 @@ export default function App() {
                         const mlEntries = Object.entries(mlScores);
                         if (!activePills.length && !mlEntries.length) return null;
                         return (
-                          <div className="bg-slate-950/50 p-4 rounded-lg border border-slate-800 space-y-4">
+                          <div className="bg-[#02110f]/50 p-4 rounded-lg border border-teal-900/50 space-y-4">
                             {activePills.length > 0 && (
                               <div>
                                 <div className="text-[9px] text-slate-500 uppercase font-bold mb-2 tracking-widest">Detectors Fired</div>
@@ -1075,7 +1105,7 @@ export default function App() {
                                           <span className="font-mono">{name}</span>
                                           <span className="font-bold text-slate-200">{pct.toFixed(1)}%</span>
                                         </div>
-                                        <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
+                                        <div className="h-1.5 bg-teal-950 rounded-full overflow-hidden ring-1 ring-teal-900/60">
                                           <div className="h-full bg-sky-500 rounded-full transition-all duration-700" style={{ width: `${pct}%` }} />
                                         </div>
                                       </div>
@@ -1089,27 +1119,27 @@ export default function App() {
                       })()}
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Incident Overview</label>
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Service</div>
                           <div className="text-sm font-bold text-slate-200">{selectedTrace.service}</div>
                         </div>
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Route</div>
                           <div className="text-sm font-bold text-slate-200">{selectedTrace.route || "—"}</div>
                         </div>
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Duration</div>
                           <div className="text-sm font-bold text-rose-400">{(selectedTrace.duration_ms ?? 0).toFixed(1)}ms</div>
                         </div>
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Anomaly Score</div>
                           <div className="text-sm font-bold text-amber-400">{(selectedTrace.anomaly_score ?? 0).toFixed(2)}</div>
                         </div>
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800 col-span-2">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50 col-span-2">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Trace ID</div>
-                          <div className="text-xs font-mono text-indigo-400 break-all">{selectedTrace.trace_id}</div>
+                          <div className="text-xs font-mono text-cyan-400 break-all">{selectedTrace.trace_id}</div>
                         </div>
-                        <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800 col-span-2">
+                        <div className="bg-[#02110f]/50 p-3 rounded-lg border border-teal-900/50 col-span-2">
                           <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">Timestamp</div>
                           <div className="text-xs text-slate-300">{selectedTrace.timestamp ? new Date(selectedTrace.timestamp).toLocaleString() : "—"}</div>
                         </div>
@@ -1126,11 +1156,11 @@ export default function App() {
                       <div className="h-48">
                         <ResponsiveContainer width="100%" height="100%">
                           <AreaChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                            <XAxis dataKey="time" stroke="#475569" fontSize={9} tickLine={false} axisLine={false} />
-                            <YAxis stroke="#475569" fontSize={9} axisLine={false} tickLine={false} />
-                            <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} itemStyle={{ color: '#818cf8', fontWeight: 'bold' }} />
-                            <Area type="monotone" dataKey="val" stroke="#818cf8" strokeWidth={2} fillOpacity={0.2} fill="#6366f1" isAnimationActive={false} />
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#0f3d38" />
+                            <XAxis dataKey="time" stroke="#4b7d76" fontSize={9} tickLine={false} axisLine={false} />
+                            <YAxis stroke="#4b7d76" fontSize={9} axisLine={false} tickLine={false} />
+                            <Tooltip contentStyle={{ backgroundColor: '#04201e', border: '1px solid #134e4a', borderRadius: '8px' }} itemStyle={{ color: '#67e8f9', fontWeight: 'bold' }} />
+                            <Area type="monotone" dataKey="val" stroke="#67e8f9" strokeWidth={2} fillOpacity={0.2} fill="#22d3ee" isAnimationActive={false} />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -1141,18 +1171,18 @@ export default function App() {
                   ) : activeTab === "Scores" && selectedTrace ? (
                     <div className="space-y-5 animate-in fade-in max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                       {/* ── Anomaly Score Gauge ─────────────────────── */}
-                      <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                      <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                         <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-4">Anomaly Score</div>
                         <div className="flex items-center gap-6">
                           <div className="relative w-20 h-20 flex-shrink-0">
                             <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-                              <circle cx="18" cy="18" r="15.91" fill="none" stroke="#1e293b" strokeWidth="3" />
+                              <circle cx="18" cy="18" r="15.91" fill="none" stroke="#0f3d38" strokeWidth="3" />
                               <circle cx="18" cy="18" r="15.91" fill="none"
                                 stroke={(() => {
                                   const s = selectedTrace.anomaly_score ?? 0;
                                   if (s >= 0.8) return "#f43f5e";
                                   if (s >= 0.5) return "#f59e0b";
-                                  return "#10b981";
+                                  return "#2dd4bf";
                                 })()}
                                 strokeWidth="3" strokeLinecap="round"
                                 strokeDasharray={`${(selectedTrace.anomaly_score ?? 0) * 100} ${100 - (selectedTrace.anomaly_score ?? 0) * 100}`}
@@ -1196,7 +1226,7 @@ export default function App() {
                         const mlEntries = Object.entries(mlScores);
                         if (!mlEntries.length) return null;
                         return (
-                          <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                          <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                             <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-4">ML Ensemble Scores</div>
                             <div className="space-y-3">
                               {mlEntries.map(([name, val]) => {
@@ -1211,7 +1241,7 @@ export default function App() {
                                         isHigh ? "text-rose-400" : isMed ? "text-amber-400" : "text-emerald-400"
                                       )}>{Number(val).toFixed(3)}</span>
                                     </div>
-                                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
+                                    <div className="h-2 bg-teal-950 rounded-full overflow-hidden ring-1 ring-teal-900/60">
                                       <div
                                         className={cn("h-full rounded-full transition-all duration-700",
                                           isHigh ? "bg-gradient-to-r from-rose-600 to-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.4)]" :
@@ -1225,7 +1255,7 @@ export default function App() {
                                 );
                               })}
                             </div>
-                            <div className="mt-3 pt-3 border-t border-slate-800 flex justify-between text-[10px]">
+                            <div className="mt-3 pt-3 border-t border-teal-900/50 flex justify-between text-[10px]">
                               <span className="text-slate-500">Ensemble Average</span>
                               <span className="text-white font-bold">
                                 {(mlEntries.reduce((sum, [, v]) => sum + (Number(v) || 0), 0) / mlEntries.length).toFixed(3)}
@@ -1239,7 +1269,7 @@ export default function App() {
                       {(() => {
                         const flags = selectedTrace.rule_flags || {};
                         return (
-                          <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                          <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                             <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-4">Rule Detector Flags</div>
                             <div className="space-y-2">
                               {RULE_PILLS.map(pill => {
@@ -1251,7 +1281,7 @@ export default function App() {
                                     "flex items-center justify-between p-2.5 rounded-lg border transition-all",
                                     active
                                       ? `${PILL_COLOR[pill.color]} border-opacity-50`
-                                      : "bg-slate-900/40 border-slate-800 text-slate-600"
+                                      : "bg-teal-950/40 border-teal-900/50 text-slate-600"
                                   )}>
                                     <div className="flex items-center gap-2.5">
                                       <div className={cn("w-2 h-2 rounded-full",
@@ -1262,7 +1292,7 @@ export default function App() {
                                     <div className="flex items-center gap-2">
                                       {detail && <span className="text-[10px] font-mono font-bold">{detail}</span>}
                                       <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded",
-                                        active ? "bg-white/10 text-white" : "bg-slate-800 text-slate-600"
+                                        active ? "bg-white/10 text-white" : "bg-teal-900/50 text-slate-600"
                                       )}>{active ? "FIRED" : "CLEAR"}</span>
                                     </div>
                                   </div>
@@ -1275,11 +1305,11 @@ export default function App() {
 
                       {/* ── Detector Reasons ───────────────────────── */}
                       {(selectedTrace.reasons || []).length > 0 && (
-                        <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                        <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                           <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-3">Detector Reason Tags</div>
                           <div className="flex flex-wrap gap-2">
                             {selectedTrace.reasons.map((reason, i) => (
-                              <span key={i} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                              <span key={i} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
                                 {reason}
                               </span>
                             ))}
@@ -1288,18 +1318,18 @@ export default function App() {
                       )}
 
                       {/* ── Event Attributes Grid ──────────────────── */}
-                      <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                      <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                         <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-4">Event Attributes</div>
                         <div className="grid grid-cols-2 gap-3">
                           {[
-                            { label: "Service", value: selectedTrace.service, color: "text-indigo-400" },
+                            { label: "Service", value: selectedTrace.service, color: "text-cyan-400" },
                             { label: "Route", value: selectedTrace.route || "—", color: "text-slate-200" },
                             { label: "Duration", value: `${(selectedTrace.duration_ms ?? 0).toFixed(1)}ms`, color: "text-rose-400" },
                             { label: "Anomaly Score", value: (selectedTrace.anomaly_score ?? 0).toFixed(4), color: "text-amber-400" },
-                            { label: "Trace ID", value: selectedTrace.trace_id, color: "text-indigo-400", mono: true, span: true },
+                            { label: "Trace ID", value: selectedTrace.trace_id, color: "text-cyan-400", mono: true, span: true },
                             { label: "Timestamp", value: selectedTrace.timestamp ? new Date(selectedTrace.timestamp).toLocaleString() : "—", color: "text-slate-300", span: true },
                           ].map((attr, i) => (
-                            <div key={i} className={cn("bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/50", attr.span ? "col-span-2" : "")}>
+                            <div key={i} className={cn("bg-teal-950/60 p-2.5 rounded-lg border border-teal-900/40", attr.span ? "col-span-2" : "")}>
                               <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">{attr.label}</div>
                               <div className={cn("text-xs font-bold break-all", attr.color, attr.mono ? "font-mono" : "")}>{attr.value}</div>
                             </div>
@@ -1308,24 +1338,24 @@ export default function App() {
                       </div>
 
                       {/* ── Raw Event JSON ─────────────────────────── */}
-                      <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800">
+                      <div className="bg-[#02110f]/50 p-5 rounded-xl border border-teal-900/50">
                         <div className="flex justify-between items-center mb-3">
                           <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Raw Anomaly Event</div>
                           <button
                             onClick={() => navigator.clipboard.writeText(JSON.stringify(selectedTrace, null, 2))}
-                            className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-indigo-500/30 hover:border-indigo-500/50 transition-all"
+                            className="text-[9px] text-cyan-400 hover:text-cyan-300 font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-cyan-500/30 hover:border-cyan-500/50 transition-all"
                           >
                             Copy JSON
                           </button>
                         </div>
-                        <pre className="text-[10px] text-slate-400 font-mono bg-slate-900/60 p-3 rounded-lg border border-slate-800/50 max-h-48 overflow-y-auto custom-scrollbar leading-relaxed whitespace-pre-wrap">
+                        <pre className="text-[10px] text-slate-400 font-mono bg-teal-950/60 p-3 rounded-lg border border-teal-900/40 max-h-48 overflow-y-auto custom-scrollbar leading-relaxed whitespace-pre-wrap">
                           {JSON.stringify(selectedTrace, null, 2)}
                         </pre>
                       </div>
                     </div>
                   ) : activeTab === "AI Analysis" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-4 text-slate-500">
-                      <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                      <div className="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
                       <p className="text-sm font-medium animate-pulse">Preparing incident context…</p>
                     </div>
                   ) : (
@@ -1336,7 +1366,7 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="py-20 text-center border-2 border-dashed border-slate-800 rounded-2xl text-slate-500">
+              <div className="py-20 text-center border-2 border-dashed border-teal-900/50 rounded-2xl text-slate-500">
                 <Search className="w-10 h-10 mx-auto mb-4 opacity-20" />
                 <p className="text-sm font-medium">Select an incident to investigate root cause</p>
               </div>
@@ -1349,12 +1379,13 @@ export default function App() {
         </div>
         </>
         )}
+        </div>
       </main>
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 text-xs font-bold text-slate-200 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-teal-950 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 text-xs font-bold text-slate-200 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
           {toast}
         </div>
       )}
@@ -1442,7 +1473,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
     <div className="space-y-8 animate-in fade-in">
       {scoped && (
         <div className="flex items-center gap-3 -mb-2">
-          <span className="text-xs font-black uppercase tracking-widest text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 px-3 py-1 rounded-lg">
+          <span className="text-xs font-black uppercase tracking-widest text-cyan-300 bg-cyan-500/10 border border-cyan-500/30 px-3 py-1 rounded-lg">
             {gatewayFilter} — dedicated view
           </span>
           <button onClick={() => setGatewayFilter("All")} className="text-[11px] text-slate-500 hover:text-slate-300 font-bold">← back to all gateways</button>
@@ -1453,7 +1484,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
         <StatCard label={scoped ? `${gatewayFilter} Success Rate` : "Success Rate"} value={`${(kpi.successRate ?? 0).toFixed(1)}%`}
           trend={`${(kpi.success ?? 0).toLocaleString("en-IN")} OK`} color="emerald" series={scoped ? [] : successRateSeries} delay={0} />
         <StatCard label={scoped ? `${gatewayFilter} Volume` : "Volume Processed"} value={fmtINRCompact(kpi.volume ?? 0)}
-          trend={scoped ? `${gatewayFilter}` : (lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE")} color="indigo" series={scoped ? [] : volumeSeries} delay={80} />
+          trend={scoped ? `${gatewayFilter}` : (lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE")} color="cyan" series={scoped ? [] : volumeSeries} delay={80} />
         <StatCard label={scoped ? `${gatewayFilter} Transactions` : "Transactions"} value={(kpi.total ?? 0).toLocaleString("en-IN")}
           trend={scoped ? `${(kpi.total ? (kpi.failed / kpi.total * 100) : 0).toFixed(1)}% failed` : `${lastTps} TPS`} color="amber" series={scoped ? [] : tpsSeries} delay={160} />
         <StatCard label={scoped ? `${gatewayFilter} Failed` : "Failed"} value={(kpi.failed ?? 0).toLocaleString("en-IN")}
@@ -1475,19 +1506,19 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
                 <AreaChart data={flowData}>
                   <defs>
                     <linearGradient id="flow-ok" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="flow-fail" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.5} />
                       <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                  <XAxis dataKey="time" stroke="#475569" fontSize={9} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#475569" fontSize={9} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} />
-                  <Area type="monotone" dataKey="success" stackId="1" stroke="#10b981" strokeWidth={2} fill="url(#flow-ok)" isAnimationActive={false} name="Success" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#0f3d38" />
+                  <XAxis dataKey="time" stroke="#4b7d76" fontSize={9} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#4b7d76" fontSize={9} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ backgroundColor: '#04201e', border: '1px solid #134e4a', borderRadius: '8px' }} />
+                  <Area type="monotone" dataKey="success" stackId="1" stroke="#2dd4bf" strokeWidth={2} fill="url(#flow-ok)" isAnimationActive={false} name="Success" />
                   <Area type="monotone" dataKey="failed" stackId="1" stroke="#f43f5e" strokeWidth={2} fill="url(#flow-fail)" isAnimationActive={false} name="Failed" />
                 </AreaChart>
               </ResponsiveContainer>
@@ -1497,7 +1528,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
 
         <div className="glass-card p-6 space-y-5">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
-            <BarChart3 className="w-4 h-4 text-indigo-400" />
+            <BarChart3 className="w-4 h-4 text-cyan-400" />
             Method &amp; Gateway Health
           </h3>
           <div className="space-y-2.5">
@@ -1508,8 +1539,8 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
                 <div key={m.method} className="flex items-center gap-3">
                   <Icon className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                   <span className="text-[11px] text-slate-300 font-bold w-28 flex-shrink-0">{m.method}</span>
-                  <div className="flex-1 h-2 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
-                    <div className="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 rounded-full transition-all duration-700"
+                  <div className="flex-1 h-2 bg-teal-950 rounded-full overflow-hidden ring-1 ring-teal-900/60">
+                    <div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-700"
                       style={{ width: `${(m.count / methodMax) * 100}%` }} />
                   </div>
                   <span className="text-[10px] text-slate-500 tabular-nums w-12 text-right">{m.count}</span>
@@ -1521,7 +1552,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
               );
             })}
           </div>
-          <div className="pt-4 border-t border-slate-800 grid grid-cols-2 gap-4">
+          <div className="pt-4 border-t border-teal-900/50 grid grid-cols-2 gap-4">
             <div>
               <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-2">Top Failure Reasons</div>
               <div className="space-y-1">
@@ -1565,7 +1596,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
               const st = styleFor(a.anomaly_type);
               return (
                 <button key={a.id ?? `${a.trace_id}-${i}`} onClick={() => onInvestigate(a)}
-                  className="text-left bg-slate-900/60 border border-slate-800 hover:border-rose-500/40 rounded-xl p-3 transition-all group">
+                  className="text-left bg-teal-950/60 border border-teal-900/50 hover:border-rose-500/40 rounded-xl p-3 transition-all group">
                   <div className="flex items-center justify-between">
                     <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", st.text, st.bg, st.border)}>
                       {a.anomaly_type}
@@ -1573,7 +1604,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
                     <span className="text-[9px] text-slate-500">{new Date(a.timestamp).toLocaleTimeString()}</span>
                   </div>
                   <div className="text-xs text-slate-300 mt-1.5 font-medium">{a.service} <span className="text-slate-500">→ {a.route}</span></div>
-                  <div className="text-[9px] text-indigo-400 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">Click to investigate →</div>
+                  <div className="text-[9px] text-cyan-400 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">Click to investigate →</div>
                 </button>
               );
             })}
@@ -1596,20 +1627,20 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={cn("px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all",
                   statusFilter === s
-                    ? (TXN_STATUS_STYLE[s] || "bg-indigo-500/10 text-indigo-300 border-indigo-500/30")
-                    : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300")}>
+                    ? (TXN_STATUS_STYLE[s] || "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")
+                    : "bg-[#02110f] text-slate-500 border-teal-900/50 hover:text-slate-300")}>
                 {s}
               </button>
             ))}
             <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+              className="bg-[#02110f] border border-teal-900/50 rounded-lg px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500">
               {["All", "UPI", "CREDIT_CARD", "DEBIT_CARD", "NET_BANKING", "WALLET", "BANK_TRANSFER", "BNPL"].map(m => (
                 <option key={m} value={m}>{m === "All" ? "All Methods" : m}</option>
               ))}
             </select>
             <select value={gatewayFilter} onChange={e => setGatewayFilter(e.target.value)}
-              className={cn("border rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500",
-                gatewayFilter === "All" ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-indigo-500/10 border-indigo-500/40 text-indigo-300 font-bold")}>
+              className={cn("border rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-cyan-500",
+                gatewayFilter === "All" ? "bg-[#02110f] border-teal-900/50 text-slate-300" : "bg-cyan-500/10 border-cyan-500/40 text-cyan-300 font-bold")}>
               {gatewayOptions.map(g => (
                 <option key={g} value={g}>{g === "All" ? "All Gateways" : g}</option>
               ))}
@@ -1621,7 +1652,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
           const failPct = g && g.count ? (g.failed / g.count) * 100 : 0;
           return (
             <div className="flex items-center gap-2 mb-2 text-[10px]">
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 font-bold text-indigo-300">
+              <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 font-bold text-cyan-300">
                 {gatewayFilter} only
               </span>
               {g && (
@@ -1636,10 +1667,10 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
             </div>
           );
         })()}
-        <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-slate-800">
+        <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-teal-900/50">
           <span>Time</span><span>Transaction</span><span>Type</span><span>Method / Provider</span><span>Gateway</span><span className="text-right">Amount</span><span className="text-right">Latency</span><span className="text-right">Status</span>
         </div>
-        <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-slate-800/40">
+        <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-teal-900/40">
           {filteredTxns.length === 0 ? (
             <div className="text-center py-12 text-slate-600 text-xs">No transactions match the current filters.</div>
           ) : (
@@ -1654,10 +1685,10 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
 function TxnRow({ txn }) {
   const Icon = METHOD_ICON[txn.method] || CreditCard;
   return (
-    <div className="grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 py-2.5 items-center hover:bg-slate-800/30 transition-colors animate-in fade-in slide-in-from-top-1">
+    <div className="row-accent grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 py-2.5 items-center hover:bg-teal-900/25 animate-in fade-in slide-in-from-top-1">
       <span className="text-[10px] text-slate-500 tabular-nums font-mono">{new Date(txn.timestamp).toLocaleTimeString()}</span>
       <div className="min-w-0">
-        <div className="text-[11px] font-mono text-indigo-300 truncate">{txn.txn_id}</div>
+        <div className="text-[11px] font-mono text-cyan-300 truncate">{txn.txn_id}</div>
         <div className="text-[9px] text-slate-600 font-mono truncate">{txn.order_id} · {txn.user}</div>
       </div>
       <span className="text-[9px] font-bold text-slate-400 uppercase">{txn.txn_type}</span>
@@ -1688,7 +1719,7 @@ function TxnRow({ txn }) {
 
 function K8sBar({ pct, danger = 80 }) {
   return (
-    <div className="flex-1 h-2 bg-slate-900 rounded-full overflow-hidden ring-1 ring-slate-800">
+    <div className="flex-1 h-2 bg-teal-950 rounded-full overflow-hidden ring-1 ring-teal-900/60">
       <div className={cn("h-full rounded-full transition-all duration-700",
         pct >= danger ? "bg-gradient-to-r from-rose-600 to-rose-400" :
         pct >= danger * 0.75 ? "bg-gradient-to-r from-amber-600 to-amber-400" :
@@ -1709,7 +1740,7 @@ function KubernetesView({ k8s }) {
   if (!k8s) {
     return (
       <div className="py-24 text-center text-slate-600 text-sm">
-        <div className="w-8 h-8 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3" />
+        <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mx-auto mb-3" />
         Connecting to cluster…
       </div>
     );
@@ -1722,11 +1753,11 @@ function KubernetesView({ k8s }) {
         {[
           { label: "Nodes Ready", value: `${s.nodes_ready}/${s.nodes_total}`, trend: "Healthy", color: "emerald" },
           { label: "Pods Running", value: `${s.pods_running}/${s.pods_total}`, trend: `${s.total_restarts} restarts`, color: s.pods_running === s.pods_total ? "emerald" : "rose" },
-          { label: "Cluster CPU", value: `${s.cluster_cpu_pct}%`, trend: s.cluster_cpu_pct > 80 ? "Critical" : "Normal", color: "indigo" },
+          { label: "Cluster CPU", value: `${s.cluster_cpu_pct}%`, trend: s.cluster_cpu_pct > 80 ? "Critical" : "Normal", color: "cyan" },
           { label: "Cluster Memory", value: `${s.cluster_mem_pct}%`, trend: s.cluster_mem_pct > 80 ? "Pressure" : "Normal", color: "amber" },
         ].map((c, i) => (
-          <div key={c.label} className="glass-card glass-card-hover p-6 relative overflow-hidden group rise" style={{ animationDelay: `${i * 80}ms` }}>
-            <div className="absolute -top-12 -right-10 w-36 h-36 rounded-full blur-3xl opacity-70 pointer-events-none" style={{ background: statCardGlow[c.color] || statCardGlow.indigo }} />
+          <div key={c.label} className="glass-card glass-card-hover tilt p-6 relative overflow-hidden group rise" style={{ animationDelay: `${i * 80}ms` }}>
+            <div className="absolute -top-12 -right-10 w-36 h-36 rounded-full blur-3xl opacity-70 pointer-events-none" style={{ background: statCardGlow[c.color] || statCardGlow.cyan }} />
             <div className="relative">
               <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{c.label}</div>
               <div className="text-3xl font-black text-white tracking-tight">{c.value}</div>
@@ -1743,7 +1774,7 @@ function KubernetesView({ k8s }) {
           <div key={n.name} className="glass-card p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-indigo-400" />
+                <Cpu className="w-4 h-4 text-cyan-400" />
                 <span className="text-sm font-bold text-slate-200">{n.name}</span>
               </div>
               <span className="text-[9px] text-slate-500 font-mono">{n.zone}</span>
@@ -1777,15 +1808,15 @@ function KubernetesView({ k8s }) {
       <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-8">
         <div className="glass-card p-6">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
-            <Boxes className="w-4 h-4 text-indigo-400" />
+            <Boxes className="w-4 h-4 text-cyan-400" />
             Pods <span className="text-slate-500 font-medium">({k8s.pods.length})</span>
           </h3>
-          <div className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-slate-800">
+          <div className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-600 border-b border-teal-900/50">
             <span>Pod</span><span>Node</span><span>Status</span><span className="text-right">↻</span><span className="text-right">CPU</span><span className="text-right">Mem</span><span className="text-right">Age</span>
           </div>
-          <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-slate-800/40">
+          <div className="max-h-[420px] overflow-y-auto custom-scrollbar divide-y divide-teal-900/40">
             {k8s.pods.map(p => (
-              <div key={p.name} className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 py-2 items-center hover:bg-slate-800/30 transition-colors">
+              <div key={p.name} className="grid grid-cols-[1.6fr_1fr_130px_50px_60px_60px_50px] gap-2 px-2 py-2 items-center hover:bg-teal-900/25 transition-colors">
                 <div className="min-w-0">
                   <div className="text-[10px] font-mono text-slate-300 truncate" title={p.name}>{p.name}</div>
                   <div className="text-[9px] text-slate-600">{p.deployment}</div>
@@ -1814,13 +1845,13 @@ function KubernetesView({ k8s }) {
               <div className="text-center py-12 text-slate-600 text-xs">No recent events.</div>
             ) : (
               k8s.events.map((e, i) => (
-                <div key={i} className="flex items-start gap-2 py-1.5 px-2 rounded-md hover:bg-slate-800/40 text-[10px] font-mono">
+                <div key={i} className="flex items-start gap-2 py-1.5 px-2 rounded-md hover:bg-teal-900/30 text-[10px] font-mono">
                   <span className="text-slate-600 flex-shrink-0 w-16 tabular-nums">{new Date(e.timestamp).toLocaleTimeString()}</span>
                   <span className={cn("flex-shrink-0 w-16 text-center rounded px-1 py-0.5 text-[8px] font-black uppercase",
                     e.type === "Warning" ? "text-amber-400 bg-amber-400/10" : "text-emerald-400 bg-emerald-400/10")}>
                     {e.type}
                   </span>
-                  <span className="text-indigo-400 flex-shrink-0 w-24 truncate">{e.reason}</span>
+                  <span className="text-cyan-400 flex-shrink-0 w-24 truncate">{e.reason}</span>
                   <span className="text-slate-400 flex-1 leading-relaxed">{e.message}</span>
                 </div>
               ))
@@ -1837,7 +1868,7 @@ function AnomalyRow({ item, onClick }) {
   return (
     <div
       onClick={onClick}
-      className="group bg-slate-900/40 p-3 rounded-xl border border-slate-800/50 hover:border-slate-700 hover:bg-slate-800/40 transition-all cursor-pointer flex items-center justify-between"
+      className="row-accent group bg-teal-950/40 p-3 rounded-xl border border-teal-900/40 hover:border-cyan-500/30 hover:bg-teal-900/30 cursor-pointer flex items-center justify-between"
     >
       <div className="flex items-center gap-4 min-w-0">
         <div className={cn("w-2 h-8 rounded-full flex items-center justify-center", style.bg)}>
@@ -1901,7 +1932,7 @@ function PIIRedactionPanel({ backendUrl }) {
   const total = (latest.gw + latest.py).toFixed(0);
 
   return (
-    <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl">
+    <div className="bg-teal-950/40 border border-teal-900/60 p-6 rounded-2xl">
       <div className="flex justify-between items-start mb-4">
         <div>
           <h6 className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2">
@@ -1925,20 +1956,20 @@ function PIIRedactionPanel({ backendUrl }) {
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="redact-gw" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="redact-py" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#67e8f9" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#67e8f9" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-              <XAxis dataKey="time" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }} />
-              <Area type="monotone" dataKey="api-gateway" stroke="#10b981" strokeWidth={2} fill="url(#redact-gw)" isAnimationActive={false} />
-              <Area type="monotone" dataKey="payment-service" stroke="#818cf8" strokeWidth={2} fill="url(#redact-py)" isAnimationActive={false} />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#0f3d38" />
+              <XAxis dataKey="time" stroke="#4b7d76" fontSize={10} tickLine={false} axisLine={false} />
+              <YAxis stroke="#4b7d76" fontSize={10} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ backgroundColor: '#04201e', border: '1px solid #134e4a', borderRadius: '8px' }} />
+              <Area type="monotone" dataKey="api-gateway" stroke="#2dd4bf" strokeWidth={2} fill="url(#redact-gw)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="payment-service" stroke="#67e8f9" strokeWidth={2} fill="url(#redact-py)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         )}
@@ -1953,7 +1984,7 @@ function Toggle({ label, active, onClick }) {
       <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors font-medium">{label}</span>
       <div className={cn(
         "w-8 h-4 rounded-full transition-all relative",
-        active ? "bg-indigo-600" : "bg-slate-800"
+        active ? "bg-cyan-600" : "bg-teal-900/50"
       )}>
         <div className={cn(
           "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm",
@@ -1976,14 +2007,14 @@ function LogRow({ log, onTraceClick }) {
   const colorClass = severityColors[log.severity] || severityColors.INFO;
 
   return (
-    <div className="flex items-start gap-3 py-1.5 px-2 rounded-md hover:bg-slate-800/40 transition-colors text-[11px] font-mono group">
+    <div className="flex items-start gap-3 py-1.5 px-2 rounded-md hover:bg-teal-900/30 transition-colors text-[11px] font-mono group">
       <span className="text-slate-600 flex-shrink-0 w-20 tabular-nums">
         {new Date(log.timestamp).toLocaleTimeString()}
       </span>
       <span className={cn("flex-shrink-0 w-14 text-center rounded px-1 py-0.5 text-[9px] font-black uppercase", colorClass)}>
         {log.severity}
       </span>
-      <span className="text-indigo-400 flex-shrink-0 w-28 truncate">
+      <span className="text-cyan-400 flex-shrink-0 w-28 truncate">
         {log.service_name}
       </span>
       <span className="text-slate-300 flex-1 truncate" title={log.body}>
@@ -1992,7 +2023,7 @@ function LogRow({ log, onTraceClick }) {
       {log.trace_id && onTraceClick && (
         <button
           onClick={(e) => { e.stopPropagation(); onTraceClick(); }}
-          className="flex-shrink-0 text-[9px] text-indigo-400 hover:text-indigo-300 opacity-0 group-hover:opacity-100 transition-opacity border border-indigo-500/30 rounded px-1.5 py-0.5"
+          className="flex-shrink-0 text-[9px] text-cyan-400 hover:text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity border border-cyan-500/30 rounded px-1.5 py-0.5"
         >
           Trace
         </button>
@@ -2002,21 +2033,21 @@ function LogRow({ log, onTraceClick }) {
 }
 
 const statCardColorMap = {
-  indigo: "text-indigo-400 bg-indigo-400/10",
+  cyan: "text-cyan-400 bg-cyan-400/10",
   rose: "text-rose-400 bg-rose-400/10",
   emerald: "text-emerald-400 bg-emerald-400/10",
   amber: "text-amber-400 bg-amber-400/10",
 };
 
 const statCardGlow = {
-  indigo: "rgba(99,102,241,0.28)",
+  cyan: "rgba(99,102,241,0.28)",
   rose: "rgba(244,63,94,0.24)",
   emerald: "rgba(16,185,129,0.24)",
   amber: "rgba(245,158,11,0.24)",
 };
 
 function StatCard({ label, value, trend, color, series, delay = 0 }) {
-  const stroke = color === 'indigo' ? '#6366f1' : color === 'rose' ? '#f43f5e' : color === 'amber' ? '#f59e0b' : '#10b981';
+  const stroke = color === 'cyan' ? '#22d3ee' : color === 'rose' ? '#f43f5e' : color === 'amber' ? '#f59e0b' : '#2dd4bf';
   const gradId = `spark-grad-${color}`;
   const hasData = Array.isArray(series) && series.length >= 2;
   const sparkPath = hasData
@@ -2024,14 +2055,14 @@ function StatCard({ label, value, trend, color, series, delay = 0 }) {
     : "M 0 15 Q 10 5, 20 15 T 40 15 T 60 5 T 80 15 T 100 10";
   const areaPath = hasData ? `${sparkPath} L 100 20 L 0 20 Z` : null;
   return (
-    <div className="glass-card glass-card-hover p-6 relative overflow-hidden group rise" style={{ animationDelay: `${delay}ms` }}>
+    <div className="glass-card glass-card-hover tilt p-6 relative overflow-hidden group rise" style={{ animationDelay: `${delay}ms` }}>
       {/* corner accent glow */}
       <div className="absolute -top-12 -right-10 w-36 h-36 rounded-full blur-3xl opacity-70 pointer-events-none transition-opacity group-hover:opacity-100"
-           style={{ background: statCardGlow[color] || statCardGlow.indigo }} />
+           style={{ background: statCardGlow[color] || statCardGlow.cyan }} />
       <div className="relative flex justify-between items-start mb-6 gap-2">
         <div className="space-y-1">
           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</div>
-          <div className="text-2xl font-black text-white tracking-tight tabular-nums drop-shadow-[0_2px_10px_rgba(0,0,0,0.4)]">{value}</div>
+          <div key={String(value)} className="value-pop text-2xl font-black text-white tracking-tight tabular-nums drop-shadow-[0_2px_10px_rgba(0,0,0,0.4)]">{value}</div>
         </div>
         <div className={cn("shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-white/10 backdrop-blur", statCardColorMap[color] || "text-slate-400 bg-slate-400/10")} title={String(trend)}>
           {trend}
