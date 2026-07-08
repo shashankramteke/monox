@@ -542,14 +542,17 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-[#020617] text-slate-100 font-sans">
+    <div className="relative flex min-h-screen text-slate-100 font-sans">
+      {/* Animated aurora background */}
+      <div className="aurora-bg" />
+
       {/* Sidebar */}
-      <aside className="w-64 border-r border-slate-800/50 bg-[#020617] p-6 flex flex-col gap-8">
+      <aside className="relative z-10 w-64 border-r border-white/5 bg-slate-950/40 backdrop-blur-xl p-6 flex flex-col gap-8">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <div className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 via-violet-600 to-fuchsia-600 glow-indigo">
             <Activity className="w-5 h-5" />
           </div>
-          <span className="text-xl font-bold tracking-tight">MonoXAI</span>
+          <span className="text-xl font-black tracking-tight text-gradient">MonoXAI</span>
         </div>
 
         <nav className="space-y-4">
@@ -565,7 +568,7 @@ export default function App() {
                 onClick={() => setView(name)}
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center justify-between group",
-                  view === name ? "bg-indigo-600/10 text-indigo-400 font-bold" : "text-slate-400 hover:bg-slate-800"
+                  view === name ? "bg-gradient-to-r from-indigo-500/20 to-fuchsia-500/10 text-indigo-200 font-bold border border-indigo-500/30 glow-indigo" : "text-slate-400 hover:bg-white/5 border border-transparent"
                 )}
               >
                 <div className="flex items-center gap-2">
@@ -587,7 +590,7 @@ export default function App() {
                 onClick={() => setSelectedService(svc)}
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center justify-between group",
-                  selectedService === svc ? "bg-indigo-600/10 text-indigo-400 font-bold" : "text-slate-400 hover:bg-slate-800"
+                  selectedService === svc ? "bg-gradient-to-r from-indigo-500/20 to-fuchsia-500/10 text-indigo-200 font-bold border border-indigo-500/30 glow-indigo" : "text-slate-400 hover:bg-white/5 border border-transparent"
                 )}
               >
                 <div className="flex items-center gap-2">
@@ -619,7 +622,7 @@ export default function App() {
             {aiInsight.hasAnomaly && (
               <button
                 onClick={() => runRCA(aiInsight.alert)}
-                className="w-full mt-3 py-2 bg-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-colors"
+                className="btn-gradient w-full mt-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white"
               >
                 Investigate Root Cause
               </button>
@@ -643,8 +646,8 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-        <header className="flex justify-between items-center mb-8 bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50">
+      <main className="relative z-10 flex-1 p-8 overflow-y-auto custom-scrollbar">
+        <header className="glass-card flex justify-between items-center mb-8 p-4 slide-in-from-top-1">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -695,7 +698,7 @@ export default function App() {
                 if (target) { runRCA(target); }
                 else { setToast("No incidents to analyze yet — waiting for anomalies"); setTimeout(() => setToast(null), 2500); }
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
+              className="btn-gradient flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-white"
             >
               <Brain className="w-4 h-4" />
               AI Assistant
@@ -718,13 +721,13 @@ export default function App() {
         <>
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-6 mb-8">
-          <StatCard label="Throughput" value={summaryStats.throughput} trend={summaryStats.throughputTrend} icon={<Activity className="text-indigo-400" />} color="indigo" series={summaryStats.throughputSeries} />
-          <StatCard label="P99 Latency" value={summaryStats.p99} trend={summaryStats.latencyTrend} icon={<Clock3 className="text-rose-400" />} color="rose" series={summaryStats.p99Series} />
-          <StatCard label="Anomaly Rate" value={summaryStats.errorRate} trend={stats.total_traces > 0 ? `${stats.anomaly_count}/${stats.total_traces}` : "Normal"} icon={<Shield className="text-emerald-400" />} color="emerald" series={summaryStats.anomalySeries} />
+          <StatCard label="Throughput" value={summaryStats.throughput} trend={summaryStats.throughputTrend} icon={<Activity className="text-indigo-400" />} color="indigo" series={summaryStats.throughputSeries} delay={0} />
+          <StatCard label="P99 Latency" value={summaryStats.p99} trend={summaryStats.latencyTrend} icon={<Clock3 className="text-rose-400" />} color="rose" series={summaryStats.p99Series} delay={90} />
+          <StatCard label="Anomaly Rate" value={summaryStats.errorRate} trend={stats.total_traces > 0 ? `${stats.anomaly_count}/${stats.total_traces}` : "Normal"} icon={<Shield className="text-emerald-400" />} color="emerald" series={summaryStats.anomalySeries} delay={180} />
         </div>
 
         {/* Chart View */}
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 mb-8">
+        <div className="glass-card p-6 mb-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
               <BarChart3 className="w-4 h-4 text-indigo-400" />
@@ -1448,18 +1451,18 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
       {/* KPI cards */}
       <div className="grid grid-cols-4 gap-6">
         <StatCard label={scoped ? `${gatewayFilter} Success Rate` : "Success Rate"} value={`${(kpi.successRate ?? 0).toFixed(1)}%`}
-          trend={`${(kpi.success ?? 0).toLocaleString("en-IN")} OK`} color="emerald" series={scoped ? [] : successRateSeries} />
+          trend={`${(kpi.success ?? 0).toLocaleString("en-IN")} OK`} color="emerald" series={scoped ? [] : successRateSeries} delay={0} />
         <StatCard label={scoped ? `${gatewayFilter} Volume` : "Volume Processed"} value={fmtINRCompact(kpi.volume ?? 0)}
-          trend={scoped ? `${gatewayFilter}` : (lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE")} color="indigo" series={scoped ? [] : volumeSeries} />
+          trend={scoped ? `${gatewayFilter}` : (lastVolumeDelta > 0 ? `+${fmtINRCompact(lastVolumeDelta)}` : "LIVE")} color="indigo" series={scoped ? [] : volumeSeries} delay={80} />
         <StatCard label={scoped ? `${gatewayFilter} Transactions` : "Transactions"} value={(kpi.total ?? 0).toLocaleString("en-IN")}
-          trend={scoped ? `${(kpi.total ? (kpi.failed / kpi.total * 100) : 0).toFixed(1)}% failed` : `${lastTps} TPS`} color="amber" series={scoped ? [] : tpsSeries} />
+          trend={scoped ? `${(kpi.total ? (kpi.failed / kpi.total * 100) : 0).toFixed(1)}% failed` : `${lastTps} TPS`} color="amber" series={scoped ? [] : tpsSeries} delay={160} />
         <StatCard label={scoped ? `${gatewayFilter} Failed` : "Failed"} value={(kpi.failed ?? 0).toLocaleString("en-IN")}
-          trend={stats?.top_failure_reasons?.[0]?.failure_reason || "—"} color="rose" series={scoped ? [] : failedSeries} />
+          trend={stats?.top_failure_reasons?.[0]?.failure_reason || "—"} color="rose" series={scoped ? [] : failedSeries} delay={240} />
       </div>
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+        <div className="glass-card p-6">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             Payment Flow (per second)
@@ -1492,7 +1495,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
           </div>
         </div>
 
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 space-y-5">
+        <div className="glass-card p-6 space-y-5">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
             <BarChart3 className="w-4 h-4 text-indigo-400" />
             Method &amp; Gateway Health
@@ -1579,7 +1582,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
       )}
 
       {/* Live transaction feed */}
-      <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+      <div className="glass-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
             <Activity className="w-4 h-4 text-emerald-400" />
@@ -1721,12 +1724,15 @@ function KubernetesView({ k8s }) {
           { label: "Pods Running", value: `${s.pods_running}/${s.pods_total}`, trend: `${s.total_restarts} restarts`, color: s.pods_running === s.pods_total ? "emerald" : "rose" },
           { label: "Cluster CPU", value: `${s.cluster_cpu_pct}%`, trend: s.cluster_cpu_pct > 80 ? "Critical" : "Normal", color: "indigo" },
           { label: "Cluster Memory", value: `${s.cluster_mem_pct}%`, trend: s.cluster_mem_pct > 80 ? "Pressure" : "Normal", color: "amber" },
-        ].map(c => (
-          <div key={c.label} className="bg-slate-900/40 border border-slate-800/50 p-6 rounded-2xl">
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{c.label}</div>
-            <div className="text-2xl font-black text-white">{c.value}</div>
-            <div className={cn("text-[10px] font-black uppercase tracking-widest mt-2 inline-block px-2 py-0.5 rounded",
-              statCardColorMap[c.color] || "text-slate-400 bg-slate-400/10")}>{c.trend}</div>
+        ].map((c, i) => (
+          <div key={c.label} className="glass-card glass-card-hover p-6 relative overflow-hidden group rise" style={{ animationDelay: `${i * 80}ms` }}>
+            <div className="absolute -top-12 -right-10 w-36 h-36 rounded-full blur-3xl opacity-70 pointer-events-none" style={{ background: statCardGlow[c.color] || statCardGlow.indigo }} />
+            <div className="relative">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{c.label}</div>
+              <div className="text-3xl font-black text-white tracking-tight">{c.value}</div>
+              <div className={cn("text-[10px] font-black uppercase tracking-widest mt-2 inline-block px-2.5 py-1 rounded-full border border-white/10",
+                statCardColorMap[c.color] || "text-slate-400 bg-slate-400/10")}>{c.trend}</div>
+            </div>
           </div>
         ))}
       </div>
@@ -1734,7 +1740,7 @@ function KubernetesView({ k8s }) {
       {/* Nodes */}
       <div className="grid grid-cols-3 gap-6">
         {k8s.nodes.map(n => (
-          <div key={n.name} className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 space-y-3">
+          <div key={n.name} className="glass-card p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-indigo-400" />
@@ -1769,7 +1775,7 @@ function KubernetesView({ k8s }) {
 
       {/* Pods + Events */}
       <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-8">
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+        <div className="glass-card p-6">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
             <Boxes className="w-4 h-4 text-indigo-400" />
             Pods <span className="text-slate-500 font-medium">({k8s.pods.length})</span>
@@ -1798,7 +1804,7 @@ function KubernetesView({ k8s }) {
           </div>
         </div>
 
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6">
+        <div className="glass-card p-6">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300 mb-4">
             <FileText className="w-4 h-4 text-amber-400" />
             Cluster Events
@@ -2002,7 +2008,14 @@ const statCardColorMap = {
   amber: "text-amber-400 bg-amber-400/10",
 };
 
-function StatCard({ label, value, trend, color, series }) {
+const statCardGlow = {
+  indigo: "rgba(99,102,241,0.28)",
+  rose: "rgba(244,63,94,0.24)",
+  emerald: "rgba(16,185,129,0.24)",
+  amber: "rgba(245,158,11,0.24)",
+};
+
+function StatCard({ label, value, trend, color, series, delay = 0 }) {
   const stroke = color === 'indigo' ? '#6366f1' : color === 'rose' ? '#f43f5e' : color === 'amber' ? '#f59e0b' : '#10b981';
   const gradId = `spark-grad-${color}`;
   const hasData = Array.isArray(series) && series.length >= 2;
@@ -2011,18 +2024,21 @@ function StatCard({ label, value, trend, color, series }) {
     : "M 0 15 Q 10 5, 20 15 T 40 15 T 60 5 T 80 15 T 100 10";
   const areaPath = hasData ? `${sparkPath} L 100 20 L 0 20 Z` : null;
   return (
-    <div className="bg-slate-900/40 border border-slate-800/50 p-6 rounded-2xl relative overflow-hidden group hover:border-slate-700 transition-all">
-      <div className="flex justify-between items-start mb-6">
+    <div className="glass-card glass-card-hover p-6 relative overflow-hidden group rise" style={{ animationDelay: `${delay}ms` }}>
+      {/* corner accent glow */}
+      <div className="absolute -top-12 -right-10 w-36 h-36 rounded-full blur-3xl opacity-70 pointer-events-none transition-opacity group-hover:opacity-100"
+           style={{ background: statCardGlow[color] || statCardGlow.indigo }} />
+      <div className="relative flex justify-between items-start mb-6 gap-2">
         <div className="space-y-1">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</div>
-          <div className="text-2xl font-black text-white">{value}</div>
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</div>
+          <div className="text-2xl font-black text-white tracking-tight tabular-nums drop-shadow-[0_2px_10px_rgba(0,0,0,0.4)]">{value}</div>
         </div>
-        <div className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded", statCardColorMap[color] || "text-slate-400 bg-slate-400/10")}>
+        <div className={cn("shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-white/10 backdrop-blur", statCardColorMap[color] || "text-slate-400 bg-slate-400/10")} title={String(trend)}>
           {trend}
         </div>
       </div>
 
-      <div className="h-12 w-full mt-4">
+      <div className="relative h-12 w-full mt-4">
         <svg viewBox="0 0 100 20" preserveAspectRatio="none" className="w-full h-full overflow-visible">
           <defs>
             <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">

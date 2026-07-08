@@ -137,15 +137,28 @@ def main():
 
     # 3. Create Space + secret
     print("[3/4] Creating/updating Space ...")
-    try:
-        api.create_repo(repo_id=space_id, repo_type="space", space_sdk="docker", exist_ok=True)
-    except Exception as e:
-        sys.exit(
-            f"\nERROR: could not create/access the Space '{space_id}'.\n"
-            "Usual causes: the token is read-only, or the Space belongs to another account.\n"
-            "Create a 'Write' token at https://huggingface.co/settings/tokens and re-run.\n"
-            f"\nDetails: {type(e).__name__}: {e}"
-        )
+    space_exists = api.repo_exists(repo_id=space_id, repo_type="space")
+    if space_exists:
+        print("      Space already exists — updating it in place.")
+    else:
+        try:
+            api.create_repo(repo_id=space_id, repo_type="space", space_sdk="docker", exist_ok=True)
+        except Exception as e:
+            msg = str(e)
+            if "402" in msg or "Payment Required" in msg:
+                sys.exit(
+                    "\nERROR: Hugging Face now requires a PRO subscription to CREATE a new Docker Space.\n"
+                    "Your existing Space is unaffected. Options:\n"
+                    "  - Redeploy to your existing Space (this script does that automatically once it exists), or\n"
+                    "  - Subscribe at https://huggingface.co/pro to create new Docker Spaces.\n"
+                    f"\nDetails: {e}"
+                )
+            sys.exit(
+                f"\nERROR: could not create/access the Space '{space_id}'.\n"
+                "Usual causes: the token is read-only, or the Space belongs to another account.\n"
+                "Create a 'Write' token at https://huggingface.co/settings/tokens and re-run.\n"
+                f"\nDetails: {type(e).__name__}: {e}"
+            )
     any_secret = False
     for key in SPACE_SECRET_KEYS:
         val = read_env_value(key)
