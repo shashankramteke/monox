@@ -76,7 +76,9 @@
   bottom: calc(-1 * min(64vw, 900px) * 0.82);
   width: min(128vw, 1800px);
   height: min(128vw, 1800px);
-  transform: translateX(-50%);
+  /* --par-x/--par-y: cursor parallax set from JS */
+  transform: translate(calc(-50% + var(--par-x, 0px)), var(--par-y, 0px));
+  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
   border-radius: 50%;
   z-index: 0;
   pointer-events: none;

@@ -43,6 +43,158 @@ function smoothPath(values, { width = 100, height = 20, padding = 2 } = {}) {
   return d;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// LIVING BACKGROUND — interactive constellation network on canvas.
+// Nodes drift and interlink; lines reach toward the cursor; clicks send
+// shockwaves through the field; live WebSocket events paint it: every
+// transaction fires a particle burst (green ok / red fail) and every
+// anomaly emits a radar ripple. The background IS the data stream.
+// ═══════════════════════════════════════════════════════════════════
+function ParticleField() {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas.getContext("2d");
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    let raf, w, h;
+    const resize = () => {
+      w = canvas.width = window.innerWidth * DPR;
+      h = canvas.height = window.innerHeight * DPR;
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerHeight + "px";
+    };
+    resize();
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const N = reduced ? 0 : 70;
+    const pts = Array.from({ length: N }, () => ({
+      x: Math.random() * w, y: Math.random() * h,
+      vx: (Math.random() - 0.5) * 0.2 * DPR, vy: (Math.random() - 0.5) * 0.2 * DPR,
+      r: (Math.random() * 1.3 + 0.6) * DPR,
+    }));
+    const mouse = { x: -9999, y: -9999 };
+    const ripples = [];
+    const bursts = [];
+
+    const onMove = (e) => { mouse.x = e.clientX * DPR; mouse.y = e.clientY * DPR; };
+    const onLeave = () => { mouse.x = -9999; mouse.y = -9999; };
+    const onClick = (e) => {
+      const cx = e.clientX * DPR, cy = e.clientY * DPR;
+      ripples.push({ x: cx, y: cy, r: 0, alpha: 0.5, speed: 5 * DPR });
+      for (const p of pts) {
+        const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy) || 1;
+        if (d < 240 * DPR) { p.vx += (dx / d) * 1.6; p.vy += (dy / d) * 1.6; }
+      }
+    };
+    const onTxn = (e) => {
+      const ok = e.detail?.status !== "FAILED";
+      const b = {
+        x: (Math.random() * 0.8 + 0.1) * w, y: (Math.random() * 0.6 + 0.15) * h,
+        life: 1, color: ok ? "52,211,153" : "251,113,133",
+        parts: Array.from({ length: 10 }, () => {
+          const a = Math.random() * Math.PI * 2, s = (Math.random() * 1.6 + 0.6) * DPR;
+          return { x: 0, y: 0, vx: Math.cos(a) * s, vy: Math.sin(a) * s };
+        }),
+      };
+      bursts.push(b);
+      if (bursts.length > 8) bursts.shift();
+    };
+    const onAnomaly = () => {
+      ripples.push({
+        x: (Math.random() * 0.7 + 0.15) * w, y: (Math.random() * 0.5 + 0.2) * h,
+        r: 0, alpha: 0.4, speed: 2.4 * DPR, color: "251,113,133",
+      });
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerdown", onClick, { passive: true });
+    window.addEventListener("pointerleave", onLeave);
+    window.addEventListener("monox:txn", onTxn);
+    window.addEventListener("monox:anomaly", onAnomaly);
+    window.addEventListener("resize", resize);
+
+    const LINK = 130 * DPR, MLINK = 175 * DPR;
+    const step = () => {
+      ctx.clearRect(0, 0, w, h);
+      // nodes
+      for (const p of pts) {
+        p.x += p.vx; p.y += p.vy;
+        p.vx *= 0.992; p.vy *= 0.992; // click impulses decay back to drift
+        if (Math.abs(p.vx) + Math.abs(p.vy) < 0.08 * DPR) {
+          p.vx += (Math.random() - 0.5) * 0.06 * DPR;
+          p.vy += (Math.random() - 0.5) * 0.06 * DPR;
+        }
+        if (p.x < 0) p.x = w; else if (p.x > w) p.x = 0;
+        if (p.y < 0) p.y = h; else if (p.y > h) p.y = 0;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(147,197,253,0.55)";
+        ctx.fill();
+      }
+      // node ↔ node links
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < LINK * LINK) {
+            const a = (1 - Math.sqrt(d2) / LINK) * 0.15;
+            ctx.strokeStyle = `rgba(96,165,250,${a})`;
+            ctx.lineWidth = 0.7 * DPR;
+            ctx.beginPath(); ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[j].x, pts[j].y); ctx.stroke();
+          }
+        }
+      }
+      // cursor links — the network reaches for the pointer
+      if (mouse.x > 0) {
+        for (const p of pts) {
+          const dx = p.x - mouse.x, dy = p.y - mouse.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < MLINK * MLINK) {
+            const a = (1 - Math.sqrt(d2) / MLINK) * 0.38;
+            ctx.strokeStyle = `rgba(191,219,254,${a})`;
+            ctx.lineWidth = 0.8 * DPR;
+            ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke();
+          }
+        }
+      }
+      // shockwave / radar ripples
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const rp = ripples[i];
+        rp.r += rp.speed; rp.alpha *= 0.95;
+        ctx.strokeStyle = `rgba(${rp.color || "147,197,253"},${rp.alpha})`;
+        ctx.lineWidth = 1.5 * DPR;
+        ctx.beginPath(); ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2); ctx.stroke();
+        if (rp.alpha < 0.02) ripples.splice(i, 1);
+      }
+      // live transaction bursts
+      for (let i = bursts.length - 1; i >= 0; i--) {
+        const b = bursts[i];
+        b.life -= 0.016;
+        for (const q of b.parts) {
+          q.x += q.vx; q.y += q.vy;
+          ctx.beginPath();
+          ctx.arc(b.x + q.x, b.y + q.y, Math.max(0.3, 1.5 * DPR * b.life), 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${b.color},${Math.max(0, b.life) * 0.8})`;
+          ctx.fill();
+        }
+        if (b.life <= 0) bursts.splice(i, 1);
+      }
+      raf = requestAnimationFrame(step);
+    };
+    if (!reduced) raf = requestAnimationFrame(step);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerdown", onClick);
+      window.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("monox:txn", onTxn);
+      window.removeEventListener("monox:anomaly", onAnomaly);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+  return <canvas ref={ref} className="fixed inset-0 z-0 pointer-events-none" />;
+}
+
 // In dev, talk to the local backend directly; in production the API and UI
 // are served from the same origin (single container deploy).
 const BACKEND_URL = import.meta.env.DEV
@@ -241,6 +393,8 @@ export default function App() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "new_anomaly") {
+          // Radar ping in the living background
+          window.dispatchEvent(new CustomEvent("monox:anomaly"));
           setAnomalies(prev => {
             const incoming = msg.data;
             const key = incoming.id ?? `${incoming.trace_id}-${incoming.timestamp}`;
@@ -261,6 +415,8 @@ export default function App() {
           setMetrics(prev => [...prev, msg.data].slice(-600));
         } else if (msg.type === "new_transaction") {
           setTxns(prev => [msg.data, ...prev].slice(0, 200));
+          // Particle burst in the living background (green ok / red fail)
+          window.dispatchEvent(new CustomEvent("monox:txn", { detail: { status: msg.data.status } }));
         } else if (msg.type === "txn_stats") {
           const d = msg.data;
           setTxnStats(prev => ({ ...(prev || {}), ...d }));
@@ -545,6 +701,9 @@ export default function App() {
   // subtle 3D tilt on KPI tiles (.tilt). Drives the CSS vars used in index.css.
   useEffect(() => {
     const move = (e) => {
+      // Parallax: background arc leans gently toward the cursor
+      document.documentElement.style.setProperty("--par-x", `${((e.clientX / window.innerWidth) - 0.5) * 26}px`);
+      document.documentElement.style.setProperty("--par-y", `${((e.clientY / window.innerHeight) - 0.5) * 14}px`);
       const card = e.target.closest?.(".glass-card");
       if (!card) return;
       const r = card.getBoundingClientRect();
@@ -570,11 +729,13 @@ export default function App() {
 
   return (
     <div className="relative flex min-h-screen text-slate-100 font-sans">
-      {/* Deep-space background: nebulas, starfield, shooting stars, portal arc */}
+      {/* Deep-space background: nebulas, starfield, shooting stars, portal arc,
+          and the live interactive constellation network */}
       <div className="aurora-bg" />
       <div className="particles" />
       <div className="shooting-stars" />
       <div className="portal-arc" />
+      <ParticleField />
 
       {/* Sidebar */}
       <aside className="relative z-10 w-64 border-r border-white/5 bg-[#050b1e]/40 backdrop-blur-xl p-6 flex flex-col gap-8">
