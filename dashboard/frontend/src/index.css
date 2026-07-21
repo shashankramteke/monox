@@ -340,10 +340,13 @@
 @keyframes slideInFromBottom { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes slideInFromTop { from { transform: translateY(-8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+@keyframes slideInRight { from { transform: translateX(30px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
+
 .animate-in { animation: fadeIn 0.4s ease-out forwards; }
 .fade-in { animation: fadeIn 0.4s ease-out forwards; }
 .slide-in-from-bottom-2 { animation: slideInFromBottom 0.4s ease-out forwards; }
 .slide-in-from-top-1 { animation: slideInFromTop 0.35s ease-out forwards; }
+.slide-in-from-right { animation: slideInRight 0.35s cubic-bezier(0.2,0.7,0.2,1) forwards; }
 
 /* Staggered card entrance */
 @keyframes rise {

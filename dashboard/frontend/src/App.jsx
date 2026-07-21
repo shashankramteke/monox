@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Activity, AlertTriangle, Cpu, Globe, RefreshCcw, Zap, Search, Brain, X,
   Server, Shield, Box, LayoutPanelLeft, ChevronRight, BarChart3, Clock3, FileText,
-  CreditCard, Boxes, Wallet, TrendingUp
+  CreditCard, Boxes, Wallet, TrendingUp, Bell, Command, CheckCircle2, Copy,
+  RotateCcw, ArrowRight, Terminal, Radio, Check
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { clsx } from 'clsx';
@@ -308,6 +309,12 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [appConfig, setAppConfig] = useState(null);
+  // New UI features
+  const [selectedTxn, setSelectedTxn] = useState(null);   // detail drawer
+  const [paletteOpen, setPaletteOpen] = useState(false);  // command palette
+  const [notifOpen, setNotifOpen] = useState(false);      // notifications dropdown
+  const [readNotifKey, setReadNotifKey] = useState(null); // key of newest read anomaly
+  const [connectOpen, setConnectOpen] = useState(false);  // Razorpay wizard
   const ws = useRef(null);
   const liveModeRef = useRef(liveMode);
   const unmountedRef = useRef(false);
@@ -727,6 +734,30 @@ export default function App() {
     };
   }, []);
 
+  // Command palette shortcut (Ctrl/Cmd+K) + Escape to close overlays
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      } else if (e.key === "Escape") {
+        setPaletteOpen(false); setNotifOpen(false); setConnectOpen(false); setSelectedTxn(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Unread anomaly count for the notifications bell (newest-first list; anything
+  // above the last-read key is unread).
+  const anomalyKey = (a) => a?.id ?? `${a?.trace_id}-${a?.timestamp}`;
+  const unreadCount = useMemo(() => {
+    if (!anomalies.length) return 0;
+    if (!readNotifKey) return Math.min(anomalies.length, 99);
+    const idx = anomalies.findIndex(a => anomalyKey(a) === readNotifKey);
+    return idx === -1 ? Math.min(anomalies.length, 99) : idx;
+  }, [anomalies, readNotifKey]);
+
   return (
     <div className="relative flex min-h-screen text-slate-100 font-sans">
       {/* Deep-space background: nebulas, starfield, shooting stars, portal arc,
@@ -848,17 +879,17 @@ export default function App() {
               <span className="text-[10px] font-black text-emerald-500 uppercase">Production</span>
             </div>
             {appConfig?.real_only ? (
-              <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 px-2 py-1 rounded-md" title={`Live payments only${appConfig.last_gateway ? " · " + appConfig.last_gateway : ""}`}>
+              <button onClick={() => setConnectOpen(true)} className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 hover:border-green-400/60 px-2 py-1 rounded-md transition-colors" title={`Live payments only${appConfig.last_gateway ? " · " + appConfig.last_gateway : ""} — click for details`}>
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                 <span className="text-[10px] font-black text-green-400 uppercase">Real Payments</span>
-              </div>
+              </button>
             ) : (
-              <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-md" title={appConfig?.integrations?.razorpay ? "Razorpay linked — waiting for first real payment" : "Demo data — link a gateway to go live"}>
+              <button onClick={() => setConnectOpen(true)} className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 hover:border-amber-400/50 px-2 py-1 rounded-md transition-colors" title="Click to link Razorpay / go live">
                 <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                 <span className="text-[10px] font-black text-amber-500 uppercase">
                   {appConfig?.integrations?.razorpay || appConfig?.integrations?.stripe ? "Awaiting Live" : "Demo Data"}
                 </span>
-              </div>
+              </button>
             )}
           </div>
 
@@ -869,11 +900,15 @@ export default function App() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by service, route, or trace ID..."
-              className="w-full bg-[#050b1e]/80 border border-slate-700/50 rounded-full py-2 pl-10 pr-4 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-500/50 focus:shadow-[0_0_20px_-4px_rgba(96,165,250,0.4)] transition-all"
+              className="w-full bg-[#050b1e]/80 border border-slate-700/50 rounded-full py-2 pl-10 pr-16 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-500/50 focus:shadow-[0_0_20px_-4px_rgba(96,165,250,0.4)] transition-all"
             />
+            <button onClick={() => setPaletteOpen(true)} title="Command palette"
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-700/60 bg-slate-900/60 text-[9px] font-bold text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-colors">
+              <Command className="w-2.5 h-2.5" />K
+            </button>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => { setLiveMode(m => !m); setToast(liveMode ? "Live updates paused" : "Live updates resumed"); setTimeout(() => setToast(null), 1500); }}
               title={liveMode ? "Pause live updates" : "Resume live updates"}
@@ -886,6 +921,26 @@ export default function App() {
             <button onClick={refreshAll} className="relative p-2 bg-[#050b1e] border border-slate-800/50 rounded-lg text-slate-400 hover:text-white transition-colors" title="Refresh all data">
               <RefreshCcw className="w-4 h-4" />
             </button>
+            {/* Notifications bell */}
+            <div className="relative">
+              <button onClick={() => { setNotifOpen(o => !o); if (!notifOpen && anomalies[0]) setReadNotifKey(anomalyKey(anomalies[0])); }}
+                className="relative p-2 bg-[#050b1e] border border-slate-800/50 rounded-lg text-slate-400 hover:text-white transition-colors" title="Notifications">
+                <Bell className={cn("w-4 h-4", unreadCount > 0 && "text-blue-300")} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center pulse-ring">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <NotificationsPanel
+                  anomalies={anomalies}
+                  onClose={() => setNotifOpen(false)}
+                  onPick={(a) => { setNotifOpen(false); runRCA(a); }}
+                  onClear={() => { if (anomalies[0]) setReadNotifKey(anomalyKey(anomalies[0])); }}
+                />
+              )}
+            </div>
             <button
               onClick={() => {
                 const target = filteredAnomalies[0] || anomalies[0];
@@ -910,6 +965,8 @@ export default function App() {
             searchQuery={searchQuery}
             anomalies={anomalies}
             onInvestigate={(a) => { setView("Observability"); runRCA(a); }}
+            onSelectTxn={setSelectedTxn}
+            onConnect={() => setConnectOpen(true)}
           />
         ) : view === "Kubernetes" ? (
           <KubernetesView k8s={k8s} />
@@ -1555,6 +1612,36 @@ export default function App() {
           {toast}
         </div>
       )}
+
+      {/* Transaction detail drawer */}
+      {selectedTxn && (
+        <TxnDrawer txn={selectedTxn} onClose={() => setSelectedTxn(null)}
+          onToast={(m) => { setToast(m); setTimeout(() => setToast(null), 2000); }} />
+      )}
+
+      {/* Command palette */}
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          services={SERVICE_NAV}
+          gateways={(txnStats?.gateway_breakdown || []).map(g => g.gateway)}
+          actions={{
+            setView: (v) => setView(v),
+            setService: (s) => { setSelectedService(s); setView("Observability"); },
+            toggleLive: () => setLiveMode(m => !m),
+            refresh: refreshAll,
+            runAI: () => { const t = filteredAnomalies[0] || anomalies[0]; if (t) runRCA(t); },
+            connect: () => setConnectOpen(true),
+          }}
+        />
+      )}
+
+      {/* Razorpay connect wizard */}
+      {connectOpen && (
+        <ConnectWizard appConfig={appConfig} backendUrl={BACKEND_URL}
+          onClose={() => setConnectOpen(false)}
+          onToast={(m) => { setToast(m); setTimeout(() => setToast(null), 2000); }} />
+      )}
     </div>
   );
 }
@@ -1570,7 +1657,7 @@ const METHOD_ICON = {
   NET_BANKING: Globe, WALLET: Wallet, BANK_TRANSFER: Server, BNPL: Clock3,
 };
 
-function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInvestigate }) {
+function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInvestigate, onSelectTxn, onConnect }) {
   const [statusFilter, setStatusFilter] = useState("All");
   const [methodFilter, setMethodFilter] = useState("All");
   const [gatewayFilter, setGatewayFilter] = useState("All");
@@ -1787,6 +1874,10 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
             <span className="flex items-center gap-1.5 ml-2 text-[9px] font-black text-emerald-500 uppercase">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> streaming
             </span>
+            <span className="text-[9px] text-slate-600 font-normal normal-case">· click a row for details</span>
+            <button onClick={onConnect} className="ml-1 flex items-center gap-1 px-2 py-0.5 rounded-md border border-blue-500/30 bg-blue-500/10 text-[9px] font-black uppercase tracking-wider text-blue-300 hover:bg-blue-500/20 transition-colors normal-case">
+              <Radio className="w-2.5 h-2.5" /> Connect Gateway
+            </button>
           </h3>
           <div className="flex items-center gap-2">
             {["All", "SUCCESS", "FAILED", "PENDING"].map(s => (
@@ -1840,7 +1931,7 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
           {filteredTxns.length === 0 ? (
             <div className="text-center py-12 text-slate-600 text-xs">No transactions match the current filters.</div>
           ) : (
-            filteredTxns.map(t => <TxnRow key={t.txn_id} txn={t} />)
+            filteredTxns.map(t => <TxnRow key={t.txn_id} txn={t} onClick={() => onSelectTxn?.(t)} />)
           )}
         </div>
       </div>
@@ -1848,10 +1939,10 @@ function TransactionsView({ txns, stats, series, searchQuery, anomalies, onInves
   );
 }
 
-function TxnRow({ txn }) {
+function TxnRow({ txn, onClick }) {
   const Icon = METHOD_ICON[txn.method] || CreditCard;
   return (
-    <div className="row-accent grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 py-2.5 items-center hover:bg-slate-800/25 animate-in fade-in slide-in-from-top-1">
+    <div onClick={onClick} className="row-accent cursor-pointer grid grid-cols-[80px_1fr_90px_1.2fr_90px_110px_70px_110px] gap-2 px-3 py-2.5 items-center hover:bg-slate-800/25 animate-in fade-in slide-in-from-top-1">
       <span className="text-[10px] text-slate-500 tabular-nums font-mono">{new Date(txn.timestamp).toLocaleTimeString()}</span>
       <div className="min-w-0">
         <div className="text-[11px] font-mono text-blue-300 truncate">{txn.txn_id}</div>
@@ -2255,6 +2346,309 @@ function StatCard({ label, value, trend, color, series, delay = 0 }) {
             className={hasData ? "" : "animate-wave"}
           />
         </svg>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NOTIFICATIONS PANEL — dropdown of recent anomalies
+// ═══════════════════════════════════════════════════════════════════
+function NotificationsPanel({ anomalies, onClose, onPick, onClear }) {
+  const list = anomalies.slice(0, 12);
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute right-0 mt-2 w-80 max-h-[70vh] overflow-hidden z-50 glass-card rounded-2xl border border-white/10 shadow-2xl shadow-black/60 flex flex-col animate-in fade-in slide-in-from-top-1">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-300">
+            <Bell className="w-3.5 h-3.5 text-blue-300" /> Notifications
+          </div>
+          <button onClick={onClear} className="text-[10px] text-slate-500 hover:text-slate-300 font-bold">Mark all read</button>
+        </div>
+        <div className="overflow-y-auto custom-scrollbar">
+          {list.length === 0 ? (
+            <div className="px-4 py-10 text-center text-xs text-slate-600">No incidents yet.</div>
+          ) : list.map((a, i) => {
+            const st = styleFor(a.anomaly_type);
+            return (
+              <button key={a.id ?? `${a.trace_id}-${i}`} onClick={() => onPick(a)}
+                className="w-full text-left px-4 py-3 border-b border-slate-800/40 hover:bg-slate-800/40 transition-colors flex items-start gap-3">
+                <div className={cn("w-2 h-2 mt-1.5 rounded-full flex-shrink-0", st.dot)} />
+                <div className="min-w-0 flex-1">
+                  <div className={cn("text-[11px] font-bold", st.text)}>{a.anomaly_type || "Anomaly"}</div>
+                  <div className="text-[10px] text-slate-400 truncate">{a.service} → {a.route}</div>
+                  <div className="text-[9px] text-slate-600 mt-0.5">{new Date(a.timestamp).toLocaleTimeString()}</div>
+                </div>
+                <ArrowRight className="w-3 h-3 text-slate-600 mt-1 flex-shrink-0" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// COMMAND PALETTE — Ctrl/Cmd+K quick nav & actions
+// ═══════════════════════════════════════════════════════════════════
+function CommandPalette({ onClose, services, gateways, actions }) {
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const items = useMemo(() => {
+    const base = [
+      { group: "Go to", label: "Observability", hint: "View", run: () => actions.setView("Observability") },
+      { group: "Go to", label: "Transactions", hint: "View", run: () => actions.setView("Transactions") },
+      { group: "Go to", label: "Kubernetes", hint: "View", run: () => actions.setView("Kubernetes") },
+      { group: "Action", label: "Toggle live updates", hint: "Live", run: actions.toggleLive },
+      { group: "Action", label: "Refresh all data", hint: "Refresh", run: actions.refresh },
+      { group: "Action", label: "Run AI root-cause on latest incident", hint: "AI", run: actions.runAI },
+      { group: "Action", label: "Connect payment gateway", hint: "Setup", run: actions.connect },
+      ...(services || []).filter(s => s !== "All Services").map(s => ({ group: "Service", label: s, hint: "Filter", run: () => actions.setService(s) })),
+      ...[...new Set(gateways || [])].filter(Boolean).map(g => ({ group: "Gateway", label: g, hint: "Payments", run: () => { actions.setView("Transactions"); } })),
+    ];
+    if (!q.trim()) return base;
+    const toks = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return base.filter(it => toks.every(t => (it.label + " " + it.group).toLowerCase().includes(t)));
+  }, [q, services, gateways]);
+
+  useEffect(() => { setSel(0); }, [q]);
+
+  const onKey = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setSel(s => Math.min(s + 1, items.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSel(s => Math.max(s - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); const it = items[sel]; if (it) { it.run(); onClose(); } }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] px-4 bg-black/50 backdrop-blur-sm animate-in fade-in" onClick={onClose}>
+      <div className="w-full max-w-xl glass-card rounded-2xl border border-white/10 shadow-2xl shadow-black/60 overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800/60">
+          <Command className="w-4 h-4 text-blue-300" />
+          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
+            placeholder="Type a command or search… (↑↓ to move, ↵ to run)"
+            className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none" />
+          <kbd className="text-[9px] text-slate-500 border border-slate-700 rounded px-1.5 py-0.5">ESC</kbd>
+        </div>
+        <div className="max-h-[50vh] overflow-y-auto custom-scrollbar py-1">
+          {items.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-slate-600">No matches.</div>
+          ) : items.map((it, i) => (
+            <button key={i} onMouseEnter={() => setSel(i)} onClick={() => { it.run(); onClose(); }}
+              className={cn("w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 transition-colors",
+                i === sel ? "bg-blue-500/15" : "hover:bg-slate-800/40")}>
+              <span className="flex items-center gap-3 min-w-0">
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 w-16 flex-shrink-0">{it.group}</span>
+                <span className="text-sm text-slate-200 truncate">{it.label}</span>
+              </span>
+              <span className="text-[9px] text-slate-600 font-bold uppercase flex-shrink-0">{it.hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TRANSACTION DETAIL DRAWER — full lifecycle + gateway response
+// ═══════════════════════════════════════════════════════════════════
+function TxnDrawer({ txn, onClose, onToast }) {
+  const [refunded, setRefunded] = useState(false);
+  const Icon = METHOD_ICON[txn.method] || CreditCard;
+  const isReal = txn.source === "live";
+  const failed = txn.status === "FAILED";
+
+  // Build a plausible payment lifecycle from the txn status.
+  const t0 = new Date(txn.timestamp).getTime();
+  const steps = [
+    { label: "Payment initiated", at: t0 - 1200, done: true },
+    { label: "Sent to gateway", sub: txn.gateway, at: t0 - 900, done: true },
+    { label: failed ? "Authorization declined" : "Authorized by bank", sub: failed ? txn.failure_reason : txn.provider, at: t0 - 400, done: true, bad: failed },
+    { label: failed ? "Payment failed" : (txn.status === "PENDING" ? "Awaiting settlement" : "Captured / settled"),
+      at: t0, done: !failed && txn.status !== "PENDING", bad: failed, pending: txn.status === "PENDING" },
+  ];
+
+  const field = (k, v, mono = true) => (
+    <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
+      <div className="text-[9px] text-slate-500 uppercase font-bold mb-1">{k}</div>
+      <div className={cn("text-xs font-bold text-slate-200 break-all", mono && "font-mono")}>{v ?? "—"}</div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] flex justify-end bg-black/50 backdrop-blur-sm animate-in fade-in" onClick={onClose}>
+      <div className="w-full max-w-md h-full overflow-y-auto custom-scrollbar bg-[#060c22] border-l border-white/10 shadow-2xl shadow-black/60 slide-in-from-right"
+        style={{ animation: "slideInRight .35s cubic-bezier(0.2,0.7,0.2,1)" }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-[#060c22]/95 backdrop-blur border-b border-slate-800/60 p-5 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", TXN_STATUS_STYLE[txn.status] || "bg-slate-500/10 text-slate-400 border-slate-500/30")}>{txn.status}</span>
+              <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", isReal ? "bg-green-500/10 text-green-400 border-green-500/30" : "bg-slate-500/10 text-slate-400 border-slate-500/30")}>{isReal ? "Live" : "Demo"}</span>
+            </div>
+            <div className="text-2xl font-black text-white mt-2 tabular-nums">{fmtAmount(txn.amount, txn.currency)}</div>
+            <div className="text-[11px] text-slate-500 font-mono mt-0.5">{txn.txn_id}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-full transition-colors"><X className="w-4 h-4 text-slate-400" /></button>
+        </div>
+
+        <div className="p-5 space-y-6">
+          {/* Lifecycle timeline */}
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Payment Timeline</div>
+            <div className="space-y-0">
+              {steps.map((s, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={cn("w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0",
+                      s.bad ? "bg-rose-500/20 text-rose-400" : s.pending ? "bg-amber-500/20 text-amber-400" : s.done ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-700/40 text-slate-500")}>
+                      {s.bad ? <X className="w-3 h-3" /> : s.pending ? <Clock3 className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                    </div>
+                    {i < steps.length - 1 && <div className="w-px flex-1 min-h-[26px] bg-slate-800" />}
+                  </div>
+                  <div className="pb-4">
+                    <div className={cn("text-xs font-bold", s.bad ? "text-rose-300" : "text-slate-200")}>{s.label}</div>
+                    {s.sub && <div className="text-[10px] text-slate-500 font-mono">{s.sub}</div>}
+                    <div className="text-[9px] text-slate-600">{new Date(s.at).toLocaleTimeString()}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Gateway response */}
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Details</div>
+            <div className="grid grid-cols-2 gap-2">
+              {field("Order ID", txn.order_id)}
+              {field("Type", txn.txn_type, false)}
+              {field("Method", txn.method, false)}
+              {field("Provider", txn.provider, false)}
+              {field("Gateway", txn.gateway, false)}
+              {field("Currency", txn.currency, false)}
+              {field("Latency", `${(txn.latency_ms ?? 0).toFixed(0)} ms`, false)}
+              {field("Customer", txn.user)}
+              {failed && <div className="col-span-2">{field("Failure reason", txn.failure_reason)}</div>}
+            </div>
+          </div>
+
+          {/* Raw payload */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Raw Event</div>
+              <button onClick={() => { navigator.clipboard?.writeText(JSON.stringify(txn, null, 2)); onToast("Transaction JSON copied"); }}
+                className="flex items-center gap-1 text-[9px] text-blue-300 hover:text-blue-200 font-bold uppercase tracking-wider border border-blue-500/30 rounded px-2 py-0.5">
+                <Copy className="w-2.5 h-2.5" /> Copy
+              </button>
+            </div>
+            <pre className="text-[10px] text-slate-400 font-mono bg-slate-950/60 p-3 rounded-lg border border-slate-800/50 max-h-44 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{JSON.stringify(txn, null, 2)}</pre>
+          </div>
+
+          {/* Actions */}
+          {txn.status === "SUCCESS" && (
+            <button
+              disabled={refunded}
+              onClick={() => { setRefunded(true); onToast(`Refund of ${fmtAmount(txn.amount, txn.currency)} initiated (demo)`); }}
+              className={cn("w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all",
+                refunded ? "bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25")}>
+              <RotateCcw className="w-4 h-4" /> {refunded ? "Refund initiated" : "Refund payment"}
+            </button>
+          )}
+          <p className="text-[9px] text-slate-600 text-center">
+            {isReal ? "Real gateway event." : "Simulated transaction — actions are demo-only."}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CONNECT WIZARD — link Razorpay / go live, from inside the UI
+// ═══════════════════════════════════════════════════════════════════
+function ConnectWizard({ appConfig, backendUrl, onClose, onToast }) {
+  const webhookUrl = `${(typeof window !== "undefined" ? window.location.origin : backendUrl)}/api/webhooks/razorpay`;
+  const linked = !!appConfig?.integrations?.razorpay;
+  const realOnly = !!appConfig?.real_only;
+  const count = appConfig?.real_payment_count ?? 0;
+
+  const copy = (v, label) => { navigator.clipboard?.writeText(v); onToast(`${label} copied`); };
+  const Step = ({ n, title, children }) => (
+    <div className="flex gap-3">
+      <div className="w-6 h-6 rounded-full bg-blue-500/15 border border-blue-500/40 text-blue-300 text-xs font-black flex items-center justify-center flex-shrink-0">{n}</div>
+      <div className="flex-1 min-w-0"><div className="text-sm font-bold text-slate-200 mb-1">{title}</div><div className="text-xs text-slate-400 space-y-2">{children}</div></div>
+    </div>
+  );
+  const Field = ({ label, value, secret }) => (
+    <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <div className="text-[9px] text-slate-500 uppercase font-bold">{label}</div>
+        <div className="text-[11px] font-mono text-slate-200 truncate">{secret ? "••••••••••••••••" : value}</div>
+      </div>
+      <button onClick={() => copy(value, label)} className="flex items-center gap-1 text-[9px] text-blue-300 hover:text-blue-200 font-bold uppercase border border-blue-500/30 rounded px-2 py-1 flex-shrink-0">
+        <Copy className="w-2.5 h-2.5" /> Copy
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 bg-black/55 backdrop-blur-sm animate-in fade-in" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[88vh] overflow-y-auto custom-scrollbar glass-card rounded-2xl border border-white/10 shadow-2xl shadow-black/60" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-[#060c22]/95 backdrop-blur border-b border-slate-800/60 p-5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center glow-blue"><Radio className="w-4 h-4" /></div>
+            <div>
+              <div className="text-sm font-black text-white">Connect Payment Gateway</div>
+              <div className="text-[10px] text-slate-500">Stream real Razorpay payments into the dashboard</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-full"><X className="w-4 h-4 text-slate-400" /></button>
+        </div>
+
+        {/* Status banner */}
+        <div className={cn("mx-5 mt-5 p-3 rounded-xl border flex items-center gap-3",
+          realOnly ? "bg-green-500/10 border-green-500/30" : linked ? "bg-amber-500/10 border-amber-500/30" : "bg-slate-800/40 border-slate-700/50")}>
+          <div className={cn("w-2.5 h-2.5 rounded-full", realOnly ? "bg-green-500 animate-pulse" : linked ? "bg-amber-500 animate-pulse" : "bg-slate-500")} />
+          <div className="text-xs font-bold text-slate-200">
+            {realOnly ? `Live — ${count} real payment${count === 1 ? "" : "s"} received` : linked ? "Razorpay secret set · awaiting first real payment" : "Not connected · showing demo data"}
+          </div>
+        </div>
+
+        <div className="p-5 space-y-5">
+          <Step n={1} title="Create a free Razorpay account (Test Mode is free, no KYC)">
+            Open the Razorpay Dashboard and stay in <b className="text-slate-200">Test Mode</b> (top-left toggle).
+          </Step>
+          <Step n={2} title="Add a webhook">
+            <p>Go to <b className="text-slate-200">Settings → Webhooks → Add New Webhook</b> and paste:</p>
+            <Field label="Webhook URL" value={webhookUrl} />
+            <Field label="Secret" value="(set on your Space as RAZORPAY_WEBHOOK_SECRET)" secret />
+            <p className="text-[10px] text-slate-500">The secret is stored privately on your deployment — copy it from your Space settings if you need the exact value.</p>
+            <p>Select events: <span className="font-mono text-slate-300">payment.captured</span>, <span className="font-mono text-slate-300">payment.failed</span>, <span className="font-mono text-slate-300">refund.processed</span>.</p>
+          </Step>
+          <Step n={3} title="Make a test payment">
+            <p>Create a <b className="text-slate-200">Payment Link</b> in Razorpay and pay it with test credentials:</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Test UPI (success)" value="success@razorpay" />
+              <Field label="Test card" value="4111 1111 1111 1111" />
+            </div>
+            <p className="text-[10px] text-slate-500">Use <span className="font-mono">failure@razorpay</span> to test a failed payment.</p>
+          </Step>
+          <Step n={4} title="Watch it appear">
+            The payment shows in your live feed within seconds and the badge flips to <b className="text-green-400">Real Payments</b>. The simulator then goes quiet so you see only genuine payments.
+          </Step>
+
+          <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60">
+            <button onClick={() => copy(webhookUrl, "Webhook URL")} className="btn-gradient flex-1 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest text-white flex items-center justify-center gap-2">
+              <Copy className="w-3.5 h-3.5" /> Copy Webhook URL
+            </button>
+            <button onClick={onClose} className="px-4 py-2.5 text-[11px] font-bold text-slate-400 hover:text-white">Close</button>
+          </div>
+        </div>
       </div>
     </div>
   );
