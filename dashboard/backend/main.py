@@ -50,6 +50,23 @@ INGEST_API_KEY = os.getenv("INGEST_API_KEY")
 # the dashboard shows only genuine payments once you go live.
 REAL_PAYMENTS_SEEN = {"active": False, "count": 0, "last_gateway": None, "since": None}
 
+# ── Real-time detection state + tuning (runs on REAL ingested payments) ──
+# Rolling windows keep the detectors cheap and stateful across requests.
+from collections import deque, defaultdict
+RT_RECENT = deque(maxlen=400)                 # recent txns (all gateways)
+RT_USER_HITS = defaultdict(lambda: deque(maxlen=60))   # user -> recent timestamps
+RT_SEEN_CHARGES = deque(maxlen=400)           # (user, amount) fingerprints for dup detection
+RT_FIRED = {}                                 # de-dupe: key -> last-fired epoch
+RT_TUNING = {
+    "fail_window": 12,        # look at last N txns for a gateway
+    "fail_min": 6,            # need at least this many to judge
+    "fail_rate": 0.40,        # >40% failures -> spike
+    "velocity_per_min": 8,    # >N txns/min from one user -> fraud velocity
+    "dup_window_s": 120,      # same (user,amount) within N seconds -> duplicate
+    "latency_ms": 8000,       # single txn slower than this -> gateway timeout
+    "refire_cooldown_s": 45,  # don't refire the same alert type/target too often
+}
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1119,6 +1136,22 @@ class SQLiteStorage(TelemetryStorage):
                 "success_rate": round(success / total * 100, 2) if total else 0.0,
             }
 
+    async def get_gateway_activity(self):
+        """Per-gateway live activity for the integrations dashboard."""
+        await self._ensure_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await (await db.execute(
+                "SELECT gateway, COUNT(*) AS count, "
+                "SUM(CASE WHEN status='SUCCESS' THEN 1 ELSE 0 END) AS success, "
+                "SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN status='SUCCESS' AND currency='INR' THEN amount ELSE 0 END) AS volume, "
+                "MAX(timestamp) AS last_event, "
+                "SUM(CASE WHEN source='live' THEN 1 ELSE 0 END) AS live_count "
+                "FROM transactions GROUP BY gateway"
+            )).fetchall()
+            return {r["gateway"]: dict(r) for r in rows}
+
     async def get_txn_stats(self):
         """Cumulative counters + breakdowns over the retained window."""
         await self._ensure_db()
@@ -1377,13 +1410,144 @@ async def get_config():
         },
     }
 
+# Canonical registry of payment gateways the API-Network dashboard shows.
+# "dedicated" gateways have a signed webhook receiver; the rest connect via
+# the universal ingest API (they still appear live once data flows).
+GATEWAY_REGISTRY = [
+    {"name": "Razorpay", "region": "India", "method": "webhook", "path": "/api/webhooks/razorpay", "secret_env": "RAZORPAY_WEBHOOK_SECRET"},
+    {"name": "Stripe", "region": "Global", "method": "webhook", "path": "/api/webhooks/stripe", "secret_env": "STRIPE_WEBHOOK_SECRET"},
+    {"name": "PhonePe", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "Paytm", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "PayU", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "Cashfree", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "JusPay", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "CCAvenue", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "Custom", "region": "Any", "method": "ingest", "path": "/api/ingest/transaction"},
+]
+
+
+@app.get("/api/integrations")
+async def get_integrations():
+    """Per-gateway connection status for the API-Network dashboard."""
+    activity = await storage.get_gateway_activity()
+    now = datetime.now(timezone.utc)
+    out = []
+    for g in GATEWAY_REGISTRY:
+        act = activity.get(g["name"], {})
+        count = act.get("count") or 0
+        success = act.get("success") or 0
+        last = act.get("last_event")
+        secs_since = None
+        if last:
+            try:
+                secs_since = (now - datetime.fromisoformat(last)).total_seconds()
+            except Exception:
+                secs_since = None
+        configured = (g["method"] == "ingest" and bool(INGEST_API_KEY)) or \
+                     (g["method"] == "webhook" and bool(os.getenv(g.get("secret_env", ""))))
+        live = bool(act.get("live_count")) and secs_since is not None and secs_since < 300
+        out.append({
+            "name": g["name"], "region": g["region"], "method": g["method"],
+            "path": g["path"], "configured": configured, "live": live,
+            "txn_count": count, "success": success,
+            "success_rate": round(success / count * 100, 1) if count else 0.0,
+            "volume_inr": round(act.get("volume") or 0.0, 2),
+            "last_event": last, "secs_since_event": round(secs_since) if secs_since is not None else None,
+        })
+    return {
+        "base_url": os.getenv("PUBLIC_BASE_URL", ""),  # UI falls back to window.origin
+        "ingest_enabled": bool(INGEST_API_KEY),
+        "gateways": out,
+    }
+
+
 # --- REAL PAYMENT INGESTION (gateway webhooks + generic API) ---
 # These endpoints turn the dashboard into a live monitor for REAL
 # transactions: point Razorpay/Stripe webhooks at them, or push
 # normalized events from any system via /api/ingest/transaction.
 
+def _rt_should_fire(key: str, now_epoch: float) -> bool:
+    """Cooldown so the same alert target doesn't spam the stream."""
+    last = RT_FIRED.get(key, 0)
+    if now_epoch - last >= RT_TUNING["refire_cooldown_s"]:
+        RT_FIRED[key] = now_epoch
+        return True
+    return False
+
+
+def _rt_alert(anomaly_type: str, service: str, route: str, score: float, reason: str,
+              flags_extra: Dict, duration_ms: float = 0.0) -> Dict:
+    flags = dict(BASE_RULE_FLAGS)
+    flags.update(flags_extra)
+    return {
+        "service": service, "route": route,
+        "anomaly_score": round(score, 4), "is_anomaly": True, "duration_ms": duration_ms,
+        "trace_id": f"rt-{uuid.uuid4().hex[:12]}",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "spans": [], "reasons": [reason], "ml_scores": {},
+        "rule_flags": flags, "anomaly_type": anomaly_type,
+    }
+
+
+def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
+    """Run rolling detectors on a REAL incoming transaction. Returns alerts."""
+    import time as _time
+    now = _time.time()
+    gw = txn.get("gateway") or "unknown"
+    user = txn.get("user") or "unknown"
+    amount = float(txn.get("amount") or 0)
+    status = txn.get("status")
+    latency = float(txn.get("latency_ms") or 0)
+    T = RT_TUNING
+    alerts = []
+
+    RT_RECENT.append(txn)
+    RT_USER_HITS[user].append(now)
+
+    # 1) Gateway failure-rate spike
+    gw_recent = [t for t in RT_RECENT if (t.get("gateway") or "unknown") == gw][-T["fail_window"]:]
+    if len(gw_recent) >= T["fail_min"]:
+        fails = sum(1 for t in gw_recent if t.get("status") == "FAILED")
+        rate = fails / len(gw_recent)
+        if rate >= T["fail_rate"] and _rt_should_fire(f"failspike:{gw}", now):
+            alerts.append(_rt_alert(
+                "Payment Failure Spike", "payment-service", f"payments.gateway/{gw}",
+                min(0.99, rate + 0.4), "payment_failure_spike",
+                {"payment_failure": True, "failure_rate": round(rate, 2), "gateway": gw}))
+
+    # 2) Fraud velocity (rapid txns from one account)
+    hits = RT_USER_HITS[user]
+    per_min = sum(1 for ts in hits if now - ts <= 60)
+    if per_min >= T["velocity_per_min"] and _rt_should_fire(f"velocity:{user}", now):
+        alerts.append(_rt_alert(
+            "Fraud Velocity", "fraud-service", "payments.fraud/velocity",
+            min(0.99, 0.7 + per_min / 100), "fraud_velocity",
+            {"fraud_velocity": True, "txn_per_min": per_min, "account": user}))
+
+    # 3) Duplicate charge (same user + amount within a short window)
+    if status != "FAILED" and amount > 0:
+        for (u, a, ts, tid) in list(RT_SEEN_CHARGES):
+            if u == user and abs(a - amount) < 0.01 and now - ts <= T["dup_window_s"]:
+                if _rt_should_fire(f"dup:{user}:{amount}", now):
+                    alerts.append(_rt_alert(
+                        "Duplicate Charge", "payment-service", "payments.idempotency/violation",
+                        0.9, "duplicate_charge", {"duplicate_charge": True, "dup_txn_id": tid}))
+                break
+        RT_SEEN_CHARGES.append((user, amount, now, txn.get("txn_id")))
+
+    # 4) Gateway timeout / severe latency
+    if latency >= T["latency_ms"] and _rt_should_fire(f"timeout:{gw}", now):
+        alerts.append(_rt_alert(
+            "Gateway Timeout", "payment-service", f"payments.gateway/{gw}",
+            min(0.95, 0.6 + latency / 40000), "gateway_timeout",
+            {"gateway_timeout": True, "gateway": gw}, duration_ms=latency))
+
+    return alerts
+
+
 async def _ingest_transaction(txn: Dict):
-    """Persist and broadcast a normalized transaction from a real source."""
+    """Persist and broadcast a normalized transaction from a real source, then
+    run real-time anomaly detection on it."""
     txn.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
     txn["source"] = "live"
     # Flip into real-only mode on the first genuine payment.
@@ -1401,6 +1565,13 @@ async def _ingest_transaction(txn: Dict):
     stats["tps"] = 1
     stats["timestamp"] = txn["timestamp"]
     await broadcast({"type": "txn_stats", "data": stats})
+
+    # Real-time anomaly detection on genuine data
+    for alert in _detect_realtime_anomalies(txn):
+        await storage.save_alert(alert)
+        await storage.increment_trace_counter(alert["service"], True)
+        await broadcast({"type": "new_anomaly", "data": alert})
+        logger.info(f"🚨 Real-time anomaly: {alert['anomaly_type']} ({alert['reasons'][0]})")
 
 
 def _mask_user(email: str = "", contact: str = "") -> str:

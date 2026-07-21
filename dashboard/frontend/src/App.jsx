@@ -3,7 +3,7 @@ import {
   Activity, AlertTriangle, Cpu, Globe, RefreshCcw, Zap, Search, Brain, X,
   Server, Shield, Box, LayoutPanelLeft, ChevronRight, BarChart3, Clock3, FileText,
   CreditCard, Boxes, Wallet, TrendingUp, Bell, Command, CheckCircle2, Copy,
-  RotateCcw, ArrowRight, Terminal, Radio, Check
+  RotateCcw, ArrowRight, Terminal, Radio, Check, Network, Plug, Wifi, WifiOff
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { clsx } from 'clsx';
@@ -315,6 +315,7 @@ export default function App() {
   const [notifOpen, setNotifOpen] = useState(false);      // notifications dropdown
   const [readNotifKey, setReadNotifKey] = useState(null); // key of newest read anomaly
   const [connectOpen, setConnectOpen] = useState(false);  // Razorpay wizard
+  const [integrations, setIntegrations] = useState(null); // API network
   const ws = useRef(null);
   const liveModeRef = useRef(liveMode);
   const unmountedRef = useRef(false);
@@ -687,7 +688,11 @@ export default function App() {
   // Refresh everything at once (header refresh button).
   const refreshAll = async () => {
     setToast("Refreshing live data…");
-    await Promise.all([fetchHistory(), loadTxnAndK8s({ force: true })]);
+    await Promise.all([
+      fetchHistory(),
+      loadTxnAndK8s({ force: true }),
+      fetch(`${BACKEND_URL}/api/integrations`).then(r => r.ok ? r.json() : null).then(d => d && setIntegrations(d)).catch(() => {}),
+    ]);
     setToast("Data refreshed");
     setTimeout(() => setToast(null), 1500);
   };
@@ -698,6 +703,7 @@ export default function App() {
       if (cancelled) return;
       loadTxnAndK8s();
       fetch(`${BACKEND_URL}/api/config`).then(r => r.ok ? r.json() : null).then(c => { if (c && !cancelled) setAppConfig(c); }).catch(() => {});
+      fetch(`${BACKEND_URL}/api/integrations`).then(r => r.ok ? r.json() : null).then(d => { if (d && !cancelled) setIntegrations(d); }).catch(() => {});
     };
     tick();
     const id = setInterval(tick, 20000);
@@ -786,6 +792,7 @@ export default function App() {
             {[
               { name: "Observability", icon: Activity },
               { name: "Transactions", icon: CreditCard },
+              { name: "Integrations", icon: Network },
               { name: "Kubernetes", icon: Boxes },
             ].map(({ name, icon: Icon }) => (
               <button
@@ -968,6 +975,10 @@ export default function App() {
             onSelectTxn={setSelectedTxn}
             onConnect={() => setConnectOpen(true)}
           />
+        ) : view === "Integrations" ? (
+          <IntegrationsView data={integrations} anomalies={anomalies}
+            onConnect={() => setConnectOpen(true)}
+            onInvestigate={(a) => { setView("Observability"); runRCA(a); }} />
         ) : view === "Kubernetes" ? (
           <KubernetesView k8s={k8s} />
         ) : (
@@ -2120,6 +2131,202 @@ function KubernetesView({ k8s }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// INTEGRATIONS / API NETWORK — all payment gateways, live connection state
+// ═══════════════════════════════════════════════════════════════════
+const GATEWAY_GLYPH = {
+  Razorpay: "R", Stripe: "S", PhonePe: "Pe", Paytm: "P", PayU: "Pu",
+  Cashfree: "Cf", JusPay: "J", CCAvenue: "CC", Custom: "＋",
+};
+const PAYMENT_ANOMALY_SET = new Set(["Payment Failure Spike", "Gateway Timeout", "Fraud Velocity", "Duplicate Charge"]);
+
+function IntegrationsView({ data, anomalies, onConnect, onInvestigate }) {
+  if (!data) {
+    return (
+      <div className="py-24 text-center text-slate-600 text-sm">
+        <div className="w-8 h-8 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mx-auto mb-3" />
+        Loading integrations…
+      </div>
+    );
+  }
+  const gws = data.gateways || [];
+  const liveCount = gws.filter(g => g.live).length;
+  const configuredCount = gws.filter(g => g.configured).length;
+  const totalTxns = gws.reduce((s, g) => s + (g.txn_count || 0), 0);
+  const payIncidents = (anomalies || []).filter(a => PAYMENT_ANOMALY_SET.has(a.anomaly_type)).slice(0, 5);
+
+  return (
+    <div className="space-y-8 animate-in fade-in">
+      {/* Summary */}
+      <div className="grid grid-cols-4 gap-6">
+        {[
+          { label: "Gateways Live", value: `${liveCount}/${gws.length}`, hint: "receiving data", color: "emerald" },
+          { label: "Configured", value: configuredCount, hint: "ready to receive", color: "blue" },
+          { label: "Events Captured", value: totalTxns.toLocaleString("en-IN"), hint: "across all gateways", color: "amber" },
+          { label: "Payment Incidents", value: payIncidents.length, hint: "detected on real data", color: "rose" },
+        ].map(c => (
+          <div key={c.label} className="glass-card glass-card-hover tilt p-6 rise">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{c.label}</div>
+            <div className="text-2xl font-black text-white value-pop" key={String(c.value)}>{c.value}</div>
+            <div className={cn("text-[10px] font-black uppercase tracking-widest mt-2 inline-block px-2 py-0.5 rounded", statCardColorMap[c.color])}>{c.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Network topology */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-300">
+            <Network className="w-4 h-4 text-blue-400" /> Payment API Network
+          </h3>
+          <button onClick={onConnect} className="btn-gradient flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white">
+            <Plug className="w-3 h-3" /> Connect Gateway
+          </button>
+        </div>
+        <NetworkGraph gateways={gws} />
+      </div>
+
+      {/* Gateway cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {gws.map((g, i) => (
+          <GatewayCard key={g.name} g={g} onConnect={onConnect} delay={i * 60} />
+        ))}
+      </div>
+
+      {/* Real-data incidents */}
+      {payIncidents.length > 0 && (
+        <div className="glass-card p-6">
+          <h3 className="text-xs font-black uppercase tracking-widest text-rose-400 flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4" /> Anomalies Detected on Real Payments
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {payIncidents.map((a, i) => {
+              const st = styleFor(a.anomaly_type);
+              return (
+                <button key={a.id ?? `${a.trace_id}-${i}`} onClick={() => onInvestigate(a)}
+                  className="text-left row-accent bg-slate-900/50 border border-slate-800 hover:border-rose-500/40 rounded-xl p-3 transition-all">
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", st.text, st.bg, st.border)}>{a.anomaly_type}</span>
+                    <span className="text-[9px] text-slate-500">{new Date(a.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="text-xs text-slate-300 mt-1.5">{a.service} <span className="text-slate-500">→ {a.route}</span></div>
+                  <div className="text-[9px] text-blue-400 mt-1">Investigate with AI →</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NetworkGraph({ gateways }) {
+  // Radial layout: central "MonoXAI" hub with a spoke to each gateway.
+  const W = 900, H = 320, cx = W / 2, cy = H / 2;
+  const R = 128;
+  const nodes = gateways.map((g, i) => {
+    const ang = (i / gateways.length) * Math.PI * 2 - Math.PI / 2;
+    return { ...g, x: cx + Math.cos(ang) * R * 1.7, y: cy + Math.sin(ang) * R };
+  });
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 640 }}>
+        <defs>
+          <radialGradient id="hub-glow"><stop offset="0%" stopColor="#3b82f6" stopOpacity="0.5" /><stop offset="100%" stopColor="#3b82f6" stopOpacity="0" /></radialGradient>
+        </defs>
+        {nodes.map((n, i) => {
+          const on = n.live || n.configured;
+          return (
+            <g key={n.name}>
+              <line x1={cx} y1={cy} x2={n.x} y2={n.y}
+                stroke={n.live ? "#34d399" : on ? "#3b82f6" : "#334155"}
+                strokeWidth={n.live ? 2 : 1} strokeDasharray={n.live ? "0" : "4 4"}
+                opacity={on ? 0.8 : 0.35} />
+              {n.live && (
+                <circle r="3" fill="#34d399">
+                  <animateMotion dur="2.2s" repeatCount="indefinite" path={`M${cx},${cy} L${n.x},${n.y}`} />
+                </circle>
+              )}
+            </g>
+          );
+        })}
+        {/* Hub */}
+        <circle cx={cx} cy={cy} r="52" fill="url(#hub-glow)" />
+        <circle cx={cx} cy={cy} r="26" fill="#0b1120" stroke="#3b82f6" strokeWidth="2" />
+        <text x={cx} y={cy - 1} textAnchor="middle" fill="#93c5fd" fontSize="10" fontWeight="bold">MonoXAI</text>
+        <text x={cx} y={cy + 11} textAnchor="middle" fill="#64748b" fontSize="7">API HUB</text>
+        {/* Gateway nodes */}
+        {nodes.map(n => {
+          const on = n.live || n.configured;
+          return (
+            <g key={n.name + "-node"}>
+              <circle cx={n.x} cy={n.y} r="20"
+                fill={n.live ? "#052e2b" : "#0b1120"}
+                stroke={n.live ? "#34d399" : n.configured ? "#3b82f6" : "#334155"} strokeWidth="2" />
+              <text x={n.x} y={n.y + 3} textAnchor="middle" fill={on ? "#e2e8f0" : "#64748b"} fontSize="9" fontWeight="bold">{GATEWAY_GLYPH[n.name] || n.name[0]}</text>
+              <text x={n.x} y={n.y + 34} textAnchor="middle" fill={on ? "#94a3b8" : "#475569"} fontSize="8">{n.name}</text>
+              {n.live && <circle cx={n.x + 15} cy={n.y - 15} r="3.5" fill="#34d399" className="pulse-ring" />}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function GatewayCard({ g, onConnect, delay }) {
+  const status = g.live ? "live" : g.configured ? "ready" : "available";
+  const ago = g.secs_since_event == null ? null : g.secs_since_event < 60 ? `${g.secs_since_event}s ago` : `${Math.floor(g.secs_since_event / 60)}m ago`;
+  return (
+    <div className="glass-card glass-card-hover p-5 rise" style={{ animationDelay: `${delay}ms` }}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm border",
+            g.live ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" : g.configured ? "bg-blue-500/15 border-blue-500/40 text-blue-300" : "bg-slate-800/60 border-slate-700 text-slate-400")}>
+            {GATEWAY_GLYPH[g.name] || g.name[0]}
+          </div>
+          <div>
+            <div className="text-sm font-bold text-slate-200">{g.name}</div>
+            <div className="text-[10px] text-slate-500">{g.region} · {g.method === "webhook" ? "Webhook" : "Ingest API"}</div>
+          </div>
+        </div>
+        <span className={cn("flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border",
+          status === "live" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" :
+          status === "ready" ? "bg-blue-500/10 text-blue-400 border-blue-500/30" :
+          "bg-slate-700/30 text-slate-500 border-slate-700/50")}>
+          {status === "live" ? <Wifi className="w-2.5 h-2.5" /> : status === "ready" ? <Radio className="w-2.5 h-2.5" /> : <WifiOff className="w-2.5 h-2.5" />}
+          {status}
+        </span>
+      </div>
+      {g.txn_count > 0 ? (
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="bg-slate-950/50 rounded-lg p-2 border border-slate-800/50">
+            <div className="text-[8px] text-slate-500 uppercase font-bold">Events</div>
+            <div className="text-sm font-black text-slate-200 tabular-nums">{g.txn_count}</div>
+          </div>
+          <div className="bg-slate-950/50 rounded-lg p-2 border border-slate-800/50">
+            <div className="text-[8px] text-slate-500 uppercase font-bold">Success</div>
+            <div className={cn("text-sm font-black tabular-nums", g.success_rate >= 90 ? "text-emerald-400" : g.success_rate >= 70 ? "text-amber-400" : "text-rose-400")}>{g.success_rate}%</div>
+          </div>
+          <div className="bg-slate-950/50 rounded-lg p-2 border border-slate-800/50">
+            <div className="text-[8px] text-slate-500 uppercase font-bold">Volume</div>
+            <div className="text-sm font-black text-slate-200 tabular-nums">{fmtINRCompact(g.volume_inr)}</div>
+          </div>
+        </div>
+      ) : (
+        <div className="text-[11px] text-slate-500 mb-3 py-2">No events yet — {g.configured ? "waiting for the first payment." : "connect to start receiving."}</div>
+      )}
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] text-slate-600">{ago ? `last event ${ago}` : "no events"}</span>
+        <button onClick={onConnect} className="flex items-center gap-1 text-[10px] font-bold text-blue-300 hover:text-blue-200 border border-blue-500/30 hover:border-blue-500/50 rounded-lg px-2.5 py-1 transition-colors">
+          <Plug className="w-3 h-3" /> {g.configured ? "Setup" : "Connect"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AnomalyRow({ item, onClick }) {
   const style = styleFor(item.anomaly_type);
   return (
@@ -2403,6 +2610,7 @@ function CommandPalette({ onClose, services, gateways, actions }) {
     const base = [
       { group: "Go to", label: "Observability", hint: "View", run: () => actions.setView("Observability") },
       { group: "Go to", label: "Transactions", hint: "View", run: () => actions.setView("Transactions") },
+      { group: "Go to", label: "Integrations", hint: "View", run: () => actions.setView("Integrations") },
       { group: "Go to", label: "Kubernetes", hint: "View", run: () => actions.setView("Kubernetes") },
       { group: "Action", label: "Toggle live updates", hint: "Live", run: actions.toggleLive },
       { group: "Action", label: "Refresh all data", hint: "Refresh", run: actions.refresh },
