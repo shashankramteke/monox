@@ -44,6 +44,11 @@ AUTO_REAL_ONLY = os.getenv("AUTO_REAL_ONLY", "on").lower() not in _off
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 INGEST_API_KEY = os.getenv("INGEST_API_KEY")
+# Per-gateway webhook secrets. A single GATEWAY_WEBHOOK_SECRET works as a
+# shared fallback so every universal-webhook gateway can be enabled at once.
+GATEWAY_WEBHOOK_SECRET = os.getenv("GATEWAY_WEBHOOK_SECRET")
+def _gateway_secret(name: str):
+    return os.getenv(f"{name.upper()}_WEBHOOK_SECRET") or GATEWAY_WEBHOOK_SECRET
 
 # Runtime flag: flips True the moment a real payment is ingested. When
 # AUTO_REAL_ONLY is on, this permanently silences simulated transactions so
@@ -1123,6 +1128,35 @@ class SQLiteStorage(TelemetryStorage):
             rows = await (await db.execute(query, params)).fetchall()
             return [dict(r) for r in rows]
 
+    async def get_transaction_by_id(self, txn_id: str):
+        await self._ensure_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # match txn_id or order_id (case-insensitive)
+            row = await (await db.execute(
+                "SELECT * FROM transactions WHERE txn_id = ? COLLATE NOCASE OR order_id = ? COLLATE NOCASE "
+                "ORDER BY id DESC LIMIT 1", (txn_id, txn_id))).fetchone()
+            return dict(row) if row else None
+
+    async def get_alerts_for_txn(self, txn_id: str, order_id: str = None):
+        """Anomalies whose stored rule_flags reference this payment."""
+        await self._ensure_db()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            like = f'%"{txn_id}"%'
+            rows = await (await db.execute(
+                "SELECT * FROM alerts WHERE rule_flags_json LIKE ? "
+                "OR trace_id = ? ORDER BY id DESC LIMIT 20", (like, txn_id))).fetchall()
+            results = []
+            for row in rows:
+                d = dict(row)
+                d["spans"] = json.loads(d["spans_json"]) if d.get("spans_json") else []
+                d["reasons"] = json.loads(d["reasons_json"]) if d.get("reasons_json") else []
+                d["ml_scores"] = json.loads(d["ml_scores_json"]) if d.get("ml_scores_json") else {}
+                d["rule_flags"] = json.loads(d["rule_flags_json"]) if d.get("rule_flags_json") else {}
+                results.append(d)
+            return results
+
     async def get_txn_counters(self):
         await self._ensure_db()
         async with aiosqlite.connect(self.db_path) as db:
@@ -1391,6 +1425,22 @@ async def get_transactions(status: Optional[str] = None, method: Optional[str] =
 async def get_transaction_stats():
     return await storage.get_txn_stats()
 
+@app.get("/api/transactions/lookup/{txn_id}")
+async def lookup_transaction(txn_id: str):
+    """Look up a payment by transaction (or order) id and return any anomalies
+    detected on it — so a user can check an incident straight from a txn id."""
+    txn = await storage.get_transaction_by_id(txn_id)
+    order_id = txn.get("order_id") if txn else None
+    anomalies = await storage.get_alerts_for_txn(txn_id, order_id)
+    # If they searched by order id, also catch anomalies tagged with the txn id
+    if txn and txn.get("txn_id") and txn["txn_id"].lower() != txn_id.lower():
+        extra = await storage.get_alerts_for_txn(txn["txn_id"])
+        seen = {a.get("id") for a in anomalies}
+        anomalies += [a for a in extra if a.get("id") not in seen]
+    if not txn and not anomalies:
+        raise HTTPException(status_code=404, detail="No transaction or anomaly found for that id")
+    return {"transaction": txn, "anomalies": anomalies, "found": bool(txn)}
+
 @app.get("/api/config")
 async def get_config():
     """Expose runtime mode + which real-payment integrations are wired,
@@ -1407,23 +1457,37 @@ async def get_config():
             "razorpay": bool(RAZORPAY_WEBHOOK_SECRET),
             "stripe": bool(STRIPE_WEBHOOK_SECRET),
             "generic_ingest": bool(INGEST_API_KEY),
+            "any_gateway": bool(RAZORPAY_WEBHOOK_SECRET or STRIPE_WEBHOOK_SECRET or GATEWAY_WEBHOOK_SECRET
+                                or any(os.getenv(f"{k}_WEBHOOK_SECRET") for k in
+                                       ("PHONEPE", "PAYTM", "PAYU", "CASHFREE", "JUSPAY", "CCAVENUE", "CUSTOM"))),
         },
     }
 
-# Canonical registry of payment gateways the API-Network dashboard shows.
-# "dedicated" gateways have a signed webhook receiver; the rest connect via
-# the universal ingest API (they still appear live once data flows).
+# Canonical registry of payment gateways. Every gateway now has its OWN signed
+# webhook endpoint. Razorpay/Stripe/PhonePe/Cashfree/PayU have native receivers
+# that parse the gateway's real payload + verify its native signature; the rest
+# use the universal signed webhook (/api/webhooks/gateway/<name>, HMAC-SHA256).
 GATEWAY_REGISTRY = [
-    {"name": "Razorpay", "region": "India", "method": "webhook", "path": "/api/webhooks/razorpay", "secret_env": "RAZORPAY_WEBHOOK_SECRET"},
-    {"name": "Stripe", "region": "Global", "method": "webhook", "path": "/api/webhooks/stripe", "secret_env": "STRIPE_WEBHOOK_SECRET"},
-    {"name": "PhonePe", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "Paytm", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "PayU", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "Cashfree", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "JusPay", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "CCAvenue", "region": "India", "method": "ingest", "path": "/api/ingest/transaction"},
-    {"name": "Custom", "region": "Any", "method": "ingest", "path": "/api/ingest/transaction"},
+    {"name": "Razorpay", "region": "India", "method": "webhook", "path": "/api/webhooks/razorpay", "scheme": "HMAC-SHA256 (X-Razorpay-Signature)", "secret_key": "RAZORPAY"},
+    {"name": "Stripe",   "region": "Global", "method": "webhook", "path": "/api/webhooks/stripe",   "scheme": "Stripe-Signature (t=,v1=)",       "secret_key": "STRIPE"},
+    {"name": "PhonePe",  "region": "India",  "method": "webhook", "path": "/api/webhooks/phonepe",  "scheme": "X-VERIFY SHA256###saltIndex",     "secret_key": "PHONEPE"},
+    {"name": "Cashfree", "region": "India",  "method": "webhook", "path": "/api/webhooks/cashfree", "scheme": "HMAC-SHA256 (x-webhook-signature)","secret_key": "CASHFREE"},
+    {"name": "PayU",     "region": "India",  "method": "webhook", "path": "/api/webhooks/payu",     "scheme": "SHA512 reverse hash",             "secret_key": "PAYU"},
+    {"name": "Paytm",    "region": "India",  "method": "webhook", "path": "/api/webhooks/gateway/paytm",  "scheme": "HMAC-SHA256 (X-Webhook-Signature)", "secret_key": "PAYTM"},
+    {"name": "JusPay",   "region": "India",  "method": "webhook", "path": "/api/webhooks/gateway/juspay", "scheme": "HMAC-SHA256 (X-Webhook-Signature)", "secret_key": "JUSPAY"},
+    {"name": "CCAvenue", "region": "India",  "method": "webhook", "path": "/api/webhooks/gateway/ccavenue","scheme": "HMAC-SHA256 (X-Webhook-Signature)", "secret_key": "CCAVENUE"},
+    {"name": "Custom",   "region": "Any",    "method": "webhook", "path": "/api/webhooks/gateway/custom",  "scheme": "HMAC-SHA256 (X-Webhook-Signature)", "secret_key": "CUSTOM"},
 ]
+
+
+def _gateway_configured(g: Dict) -> bool:
+    key = g.get("secret_key", "")
+    if key == "RAZORPAY":
+        return bool(RAZORPAY_WEBHOOK_SECRET)
+    if key == "STRIPE":
+        return bool(STRIPE_WEBHOOK_SECRET)
+    # native + universal gateways: their own secret, or the shared fallback
+    return bool(os.getenv(f"{key}_WEBHOOK_SECRET") or GATEWAY_WEBHOOK_SECRET)
 
 
 @app.get("/api/integrations")
@@ -1443,12 +1507,11 @@ async def get_integrations():
                 secs_since = (now - datetime.fromisoformat(last)).total_seconds()
             except Exception:
                 secs_since = None
-        configured = (g["method"] == "ingest" and bool(INGEST_API_KEY)) or \
-                     (g["method"] == "webhook" and bool(os.getenv(g.get("secret_env", ""))))
         live = bool(act.get("live_count")) and secs_since is not None and secs_since < 300
         out.append({
             "name": g["name"], "region": g["region"], "method": g["method"],
-            "path": g["path"], "configured": configured, "live": live,
+            "path": g["path"], "scheme": g.get("scheme"),
+            "configured": _gateway_configured(g), "live": live,
             "txn_count": count, "success": success,
             "success_rate": round(success / count * 100, 1) if count else 0.0,
             "volume_inr": round(act.get("volume") or 0.0, 2),
@@ -1500,6 +1563,9 @@ def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
     latency = float(txn.get("latency_ms") or 0)
     T = RT_TUNING
     alerts = []
+    # Every anomaly carries the triggering payment's IDs so users can look it
+    # up by transaction id (see GET /api/transactions/{txn_id}).
+    ids = {"txn_id": txn.get("txn_id"), "order_id": txn.get("order_id"), "gateway": gw}
 
     RT_RECENT.append(txn)
     RT_USER_HITS[user].append(now)
@@ -1513,7 +1579,7 @@ def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
             alerts.append(_rt_alert(
                 "Payment Failure Spike", "payment-service", f"payments.gateway/{gw}",
                 min(0.99, rate + 0.4), "payment_failure_spike",
-                {"payment_failure": True, "failure_rate": round(rate, 2), "gateway": gw}))
+                {**ids, "payment_failure": True, "failure_rate": round(rate, 2)}))
 
     # 2) Fraud velocity (rapid txns from one account)
     hits = RT_USER_HITS[user]
@@ -1522,7 +1588,7 @@ def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
         alerts.append(_rt_alert(
             "Fraud Velocity", "fraud-service", "payments.fraud/velocity",
             min(0.99, 0.7 + per_min / 100), "fraud_velocity",
-            {"fraud_velocity": True, "txn_per_min": per_min, "account": user}))
+            {**ids, "fraud_velocity": True, "txn_per_min": per_min, "account": user}))
 
     # 3) Duplicate charge (same user + amount within a short window)
     if status != "FAILED" and amount > 0:
@@ -1531,7 +1597,7 @@ def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
                 if _rt_should_fire(f"dup:{user}:{amount}", now):
                     alerts.append(_rt_alert(
                         "Duplicate Charge", "payment-service", "payments.idempotency/violation",
-                        0.9, "duplicate_charge", {"duplicate_charge": True, "dup_txn_id": tid}))
+                        0.9, "duplicate_charge", {**ids, "duplicate_charge": True, "dup_txn_id": tid}))
                 break
         RT_SEEN_CHARGES.append((user, amount, now, txn.get("txn_id")))
 
@@ -1540,7 +1606,7 @@ def _detect_realtime_anomalies(txn: Dict) -> List[Dict]:
         alerts.append(_rt_alert(
             "Gateway Timeout", "payment-service", f"payments.gateway/{gw}",
             min(0.95, 0.6 + latency / 40000), "gateway_timeout",
-            {"gateway_timeout": True, "gateway": gw}, duration_ms=latency))
+            {**ids, "gateway_timeout": True}, duration_ms=latency))
 
     return alerts
 
@@ -1703,6 +1769,133 @@ async def stripe_webhook(request: Request):
     }
     await _ingest_transaction(txn)
     logger.info(f"💳 Stripe webhook: {etype} → {txn['txn_id']} ({status})")
+    return {"status": "ok"}
+
+
+# ── PhonePe (X-VERIFY: sha256(base64Payload + saltKey) + "###" + saltIndex) ──
+@app.post("/api/webhooks/phonepe")
+async def phonepe_webhook(request: Request):
+    secret = _gateway_secret("PHONEPE")
+    if not secret:
+        raise HTTPException(status_code=503, detail="PHONEPE_WEBHOOK_SECRET not configured")
+    body = await request.body()
+    xverify = request.headers.get("x-verify", "")
+    salt_index = xverify.split("###")[-1] if "###" in xverify else "1"
+    payload = json.loads(body or b"{}")
+    b64 = payload.get("response", "")
+    expected = hashlib.sha256((b64 + secret).encode()).hexdigest() + "###" + salt_index
+    if not hmac.compare_digest(expected, xverify):
+        raise HTTPException(status_code=401, detail="Invalid X-VERIFY signature")
+    import base64 as _b64
+    data = json.loads(_b64.b64decode(b64)).get("data", {}) if b64 else payload
+    state = (data.get("state") or data.get("responseCode") or "").upper()
+    status = "SUCCESS" if state in ("COMPLETED", "SUCCESS", "PAYMENT_SUCCESS") else \
+             "PENDING" if state in ("PENDING",) else "FAILED"
+    txn = {
+        "txn_id": data.get("transactionId") or data.get("merchantTransactionId") or f"TXN{uuid.uuid4().hex[:12].upper()}",
+        "order_id": data.get("merchantTransactionId") or "—", "txn_type": "PURCHASE",
+        "method": "UPI", "provider": "PhonePe", "gateway": "PhonePe",
+        "amount": round((data.get("amount") or 0) / 100.0, 2), "currency": "INR",
+        "status": status, "latency_ms": 0.0,
+        "failure_reason": None if status == "SUCCESS" else state,
+        "user": _mask_user("", data.get("mobileNumber") or ""),
+    }
+    await _ingest_transaction(txn)
+    logger.info(f"💳 PhonePe webhook → {txn['txn_id']} ({status})")
+    return {"status": "ok"}
+
+
+# ── Cashfree (x-webhook-signature = base64(HMAC_SHA256(timestamp + rawBody))) ──
+@app.post("/api/webhooks/cashfree")
+async def cashfree_webhook(request: Request):
+    secret = _gateway_secret("CASHFREE")
+    if not secret:
+        raise HTTPException(status_code=503, detail="CASHFREE_WEBHOOK_SECRET not configured")
+    body = await request.body()
+    sig = request.headers.get("x-webhook-signature", "")
+    ts = request.headers.get("x-webhook-timestamp", "")
+    import base64 as _b64
+    expected = _b64.b64encode(hmac.new(secret.encode(), (ts + body.decode()).encode(), hashlib.sha256).digest()).decode()
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    ev = json.loads(body or b"{}")
+    d = ev.get("data", ev)
+    pay = d.get("payment", d)
+    st = (pay.get("payment_status") or "").upper()
+    status = "SUCCESS" if st in ("SUCCESS", "PAID") else "PENDING" if st in ("PENDING",) else "FAILED"
+    order = d.get("order", {})
+    txn = {
+        "txn_id": str(pay.get("cf_payment_id") or f"TXN{uuid.uuid4().hex[:12].upper()}"),
+        "order_id": order.get("order_id") or "—", "txn_type": "PURCHASE",
+        "method": {"upi": "UPI", "card": "CREDIT_CARD", "netbanking": "NET_BANKING", "app": "WALLET"}.get((pay.get("payment_group") or "").lower(), "UPI"),
+        "provider": "Cashfree", "gateway": "Cashfree",
+        "amount": round(float(order.get("order_amount") or pay.get("payment_amount") or 0), 2),
+        "currency": order.get("order_currency") or "INR", "status": status, "latency_ms": 0.0,
+        "failure_reason": pay.get("error_details", {}).get("error_reason") if status == "FAILED" else None,
+        "user": "customer***",
+    }
+    await _ingest_transaction(txn)
+    logger.info(f"💳 Cashfree webhook → {txn['txn_id']} ({status})")
+    return {"status": "ok"}
+
+
+# ── PayU (reverse hash: sha512(salt|status|udf..|email|firstname|productinfo|amount|txnid|key)) ──
+@app.post("/api/webhooks/payu")
+async def payu_webhook(request: Request):
+    secret = _gateway_secret("PAYU")   # PayU merchant SALT
+    if not secret:
+        raise HTTPException(status_code=503, detail="PAYU_WEBHOOK_SECRET (salt) not configured")
+    form = dict((await request.form()))
+    key = form.get("key", ""); txnid = form.get("txnid", ""); amount = form.get("amount", "")
+    productinfo = form.get("productinfo", ""); firstname = form.get("firstname", ""); email = form.get("email", "")
+    status = form.get("status", ""); posted = form.get("hash", "")
+    udf = [form.get(f"udf{i}", "") for i in range(1, 6)]
+    seq = [secret, status] + list(reversed(udf)) + ["", "", "", "", "", email, firstname, productinfo, amount, txnid, key]
+    expected = hashlib.sha512("|".join(seq).encode()).hexdigest()
+    if not hmac.compare_digest(expected, posted):
+        raise HTTPException(status_code=401, detail="Invalid PayU reverse hash")
+    norm = "SUCCESS" if status.lower() == "success" else "PENDING" if status.lower() in ("pending", "in progress") else "FAILED"
+    txn = {
+        "txn_id": form.get("mihpayid") or txnid or f"TXN{uuid.uuid4().hex[:12].upper()}",
+        "order_id": txnid or "—", "txn_type": "PURCHASE",
+        "method": {"upi": "UPI", "cc": "CREDIT_CARD", "dc": "DEBIT_CARD", "nb": "NET_BANKING", "cash": "WALLET"}.get((form.get("mode") or "").lower(), "CREDIT_CARD"),
+        "provider": "PayU", "gateway": "PayU",
+        "amount": round(float(amount or 0), 2), "currency": "INR", "status": norm, "latency_ms": 0.0,
+        "failure_reason": form.get("error_Message") if norm == "FAILED" else None,
+        "user": _mask_user(email or ""),
+    }
+    await _ingest_transaction(txn)
+    logger.info(f"💳 PayU webhook → {txn['txn_id']} ({norm})")
+    return {"status": "ok"}
+
+
+# ── Universal signed webhook: any gateway that posts our normalized JSON with
+#    X-Webhook-Signature = HMAC_SHA256(rawBody, secret) (hex or base64). ──
+@app.post("/api/webhooks/gateway/{name}")
+async def universal_gateway_webhook(name: str, request: Request):
+    secret = _gateway_secret(name)
+    if not secret:
+        raise HTTPException(status_code=503, detail=f"{name.upper()}_WEBHOOK_SECRET (or GATEWAY_WEBHOOK_SECRET) not configured")
+    body = await request.body()
+    sig = request.headers.get("x-webhook-signature", "")
+    hex_sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    import base64 as _b64
+    b64_sig = _b64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+    if not (hmac.compare_digest(hex_sig, sig) or hmac.compare_digest(b64_sig, sig)):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    d = json.loads(body or b"{}")
+    txn = {
+        "txn_id": d.get("txn_id") or f"TXN{uuid.uuid4().hex[:12].upper()}",
+        "order_id": d.get("order_id") or "—",
+        "txn_type": d.get("txn_type", "PURCHASE"),
+        "method": d.get("method", "UPI"), "provider": d.get("provider", name.title()),
+        "gateway": d.get("gateway", name.title()),
+        "amount": round(float(d.get("amount") or 0), 2), "currency": d.get("currency", "INR"),
+        "status": d.get("status", "SUCCESS"), "latency_ms": float(d.get("latency_ms") or 0),
+        "failure_reason": d.get("failure_reason"), "user": d.get("user", "customer***"),
+    }
+    await _ingest_transaction(txn)
+    logger.info(f"💳 {name.title()} webhook → {txn['txn_id']} ({txn['status']})")
     return {"status": "ok"}
 
 

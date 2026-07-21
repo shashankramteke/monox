@@ -688,6 +688,22 @@ export default function App() {
   };
 
   // Refresh everything at once (header refresh button).
+  // Look up a payment by transaction / order id and open its detail drawer
+  // (which shows any anomalies detected on it).
+  const lookupTxn = async (id) => {
+    const q = (id || "").trim();
+    if (!q) return;
+    setToast(`Looking up ${q}…`);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/transactions/lookup/${encodeURIComponent(q)}`);
+      if (!res.ok) { setToast(`No transaction or anomaly found for "${q}"`); setTimeout(() => setToast(null), 2500); return; }
+      const d = await res.json();
+      if (d.transaction) { setSelectedTxn(d.transaction); setToast(null); }
+      else if ((d.anomalies || []).length) { setView("Observability"); runRCA(d.anomalies[0]); setToast(null); }
+      else { setToast(`No transaction found for "${q}"`); setTimeout(() => setToast(null), 2500); }
+    } catch { setToast("Lookup failed — check connection"); setTimeout(() => setToast(null), 2500); }
+  };
+
   const refreshAll = async () => {
     setToast("Refreshing live data…");
     await Promise.all([
@@ -907,7 +923,8 @@ export default function App() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by service, route, or trace ID..."
+              onKeyDown={(e) => { if (e.key === "Enter" && searchQuery.trim()) lookupTxn(searchQuery.trim()); }}
+              placeholder="Search, or press Enter to look up a transaction ID…"
               className="w-full bg-[#050b1e]/80 border border-slate-700/50 rounded-full py-2 pl-10 pr-16 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-500/50 focus:shadow-[0_0_20px_-4px_rgba(96,165,250,0.4)] transition-all"
             />
             <button onClick={() => setPaletteOpen(true)} title="Command palette"
@@ -975,10 +992,12 @@ export default function App() {
             onInvestigate={(a) => { setView("Observability"); runRCA(a); }}
             onSelectTxn={setSelectedTxn}
             onConnect={() => setConnectOpen(true)}
+            onLookup={lookupTxn}
           />
         ) : view === "Integrations" ? (
           <IntegrationsView data={integrations} anomalies={anomalies}
             onConnect={() => setConnectOpen(true)}
+            onLookup={lookupTxn}
             onInvestigate={(a) => { setView("Observability"); runRCA(a); }} />
         ) : view === "Kubernetes" ? (
           <KubernetesView k8s={k8s} />
@@ -1628,7 +1647,8 @@ export default function App() {
       {/* Transaction detail drawer */}
       {selectedTxn && (
         <TxnDrawer txn={selectedTxn} onClose={() => setSelectedTxn(null)}
-          onToast={(m) => { setToast(m); setTimeout(() => setToast(null), 2000); }} />
+          onToast={(m) => { setToast(m); setTimeout(() => setToast(null), 2000); }}
+          onInvestigate={(a) => { setSelectedTxn(null); setView("Observability"); runRCA(a); }} />
       )}
 
       {/* Command palette */}
@@ -1648,9 +1668,9 @@ export default function App() {
         />
       )}
 
-      {/* Razorpay connect wizard */}
+      {/* Per-gateway connect wizard */}
       {connectOpen && (
-        <ConnectWizard appConfig={appConfig} backendUrl={BACKEND_URL}
+        <ConnectWizard appConfig={appConfig} integrations={integrations} backendUrl={BACKEND_URL}
           onClose={() => setConnectOpen(false)}
           onToast={(m) => { setToast(m); setTimeout(() => setToast(null), 2000); }} />
       )}
@@ -2141,7 +2161,8 @@ const GATEWAY_GLYPH = {
 };
 const PAYMENT_ANOMALY_SET = new Set(["Payment Failure Spike", "Gateway Timeout", "Fraud Velocity", "Duplicate Charge"]);
 
-function IntegrationsView({ data, anomalies, onConnect, onInvestigate }) {
+function IntegrationsView({ data, anomalies, onConnect, onInvestigate, onLookup }) {
+  const [lookupId, setLookupId] = useState("");
   if (!data) {
     return (
       <div className="py-24 text-center text-slate-600 text-sm">
@@ -2172,6 +2193,29 @@ function IntegrationsView({ data, anomalies, onConnect, onInvestigate }) {
             <div className={cn("text-[10px] font-black uppercase tracking-widest mt-2 inline-block px-2 py-0.5 rounded", statCardColorMap[c.color])}>{c.hint}</div>
           </div>
         ))}
+      </div>
+
+      {/* Transaction lookup — check a payment (and its anomalies) by ID */}
+      <div className="glass-card p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-200 flex-shrink-0">
+            <Search className="w-4 h-4 text-blue-400" /> Look up a transaction
+          </div>
+          <div className="flex-1 relative">
+            <input
+              value={lookupId}
+              onChange={(e) => setLookupId(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && lookupId.trim()) onLookup(lookupId.trim()); }}
+              placeholder="Enter transaction ID or order ID (e.g. TXN…, pay_…, ORD…) and press Enter"
+              className="w-full bg-[#050b1e]/80 border border-slate-700/50 rounded-lg py-2 px-3 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-500/50 transition-all"
+            />
+          </div>
+          <button onClick={() => lookupId.trim() && onLookup(lookupId.trim())}
+            className="btn-gradient px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white flex-shrink-0">
+            Look up
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-600 mt-2">Opens the payment's full timeline and shows any anomalies detected on it — investigate with AI in one click.</p>
       </div>
 
       {/* Network topology */}
@@ -2666,11 +2710,22 @@ function CommandPalette({ onClose, services, gateways, actions }) {
 // ═══════════════════════════════════════════════════════════════════
 // TRANSACTION DETAIL DRAWER — full lifecycle + gateway response
 // ═══════════════════════════════════════════════════════════════════
-function TxnDrawer({ txn, onClose, onToast }) {
+function TxnDrawer({ txn, onClose, onToast, onInvestigate }) {
   const [refunded, setRefunded] = useState(false);
+  const [linkedAnomalies, setLinkedAnomalies] = useState([]);
   const Icon = METHOD_ICON[txn.method] || CreditCard;
   const isReal = txn.source === "live";
   const failed = txn.status === "FAILED";
+
+  // Fetch any anomalies detected on this transaction id.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BACKEND_URL}/api/transactions/lookup/${encodeURIComponent(txn.txn_id)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && !cancelled) setLinkedAnomalies(d.anomalies || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [txn.txn_id]);
 
   // Build a plausible payment lifecycle from the txn status.
   const t0 = new Date(txn.timestamp).getTime();
@@ -2758,6 +2813,35 @@ function TxnDrawer({ txn, onClose, onToast }) {
             <pre className="text-[10px] text-slate-400 font-mono bg-slate-950/60 p-3 rounded-lg border border-slate-800/50 max-h-44 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{JSON.stringify(txn, null, 2)}</pre>
           </div>
 
+          {/* Linked anomalies detected on this transaction */}
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-2">
+              <AlertTriangle className="w-3 h-3 text-rose-400" /> Anomalies on this transaction
+            </div>
+            {linkedAnomalies.length === 0 ? (
+              <div className="flex items-center gap-2 text-[11px] text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                <CheckCircle2 className="w-4 h-4" /> No anomalies detected — this payment looks healthy.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {linkedAnomalies.map((a, i) => {
+                  const st = styleFor(a.anomaly_type);
+                  return (
+                    <button key={a.id ?? i} onClick={() => { onInvestigate?.(a); onClose(); }}
+                      className="w-full text-left bg-slate-950/50 border border-slate-800 hover:border-rose-500/40 rounded-lg p-3 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border", st.text, st.bg, st.border)}>{a.anomaly_type}</span>
+                        <span className="text-[9px] text-slate-500">{new Date(a.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1.5">{(a.reasons || [])[0]} · score {(a.anomaly_score ?? 0).toFixed(2)}</div>
+                      <div className="text-[9px] text-blue-400 mt-1">Investigate with AI →</div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Actions */}
           {txn.status === "SUCCESS" && (
             <button
@@ -2778,82 +2862,114 @@ function TxnDrawer({ txn, onClose, onToast }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// CONNECT WIZARD — link Razorpay / go live, from inside the UI
+// CONNECT WIZARD — per-gateway webhook setup, from inside the UI
 // ═══════════════════════════════════════════════════════════════════
-function ConnectWizard({ appConfig, backendUrl, onClose, onToast }) {
-  const webhookUrl = `${(typeof window !== "undefined" ? window.location.origin : backendUrl)}/api/webhooks/razorpay`;
-  const linked = !!appConfig?.integrations?.razorpay;
+const GATEWAY_TEST_TIPS = {
+  Razorpay: { events: "payment.captured, payment.failed, refund.processed", test: [["Test UPI", "success@razorpay"], ["Test card", "4111 1111 1111 1111"]], where: "Settings → Webhooks → Add New Webhook" },
+  Stripe:   { events: "payment_intent.succeeded, payment_intent.payment_failed, charge.refunded", test: [["Test card", "4242 4242 4242 4242"], ["Any future expiry", "12/34 · CVV 123"]], where: "Developers → Webhooks → Add endpoint" },
+  PhonePe:  { events: "Payment status callback (S2S)", test: [["Sandbox", "PhonePe UAT simulator"]], where: "Merchant Dashboard → Webhooks / callback URL" },
+  Cashfree: { events: "PAYMENT_SUCCESS_WEBHOOK, PAYMENT_FAILED_WEBHOOK", test: [["Test UPI", "testsuccess@gocash"], ["Test card", "4111 1111 1111 1111"]], where: "Developers → Webhooks" },
+  PayU:     { events: "Success/Failure callback (SURL/FURL)", test: [["Test card", "5123 4567 8901 2346"], ["Sandbox", "PayU test dashboard"]], where: "Integration → Webhooks / callback" },
+  Paytm:    { events: "Transaction status callback", test: [["Sandbox", "Paytm staging"]], where: "Dashboard → Webhooks (post normalized JSON, HMAC-SHA256)" },
+  JusPay:   { events: "Order status webhook", test: [["Sandbox", "JusPay sandbox"]], where: "Dashboard → Webhooks (post normalized JSON, HMAC-SHA256)" },
+  CCAvenue: { events: "Response handler", test: [["Test card", "4111 1111 1111 1111"]], where: "Settings → Webhooks (post normalized JSON, HMAC-SHA256)" },
+  Custom:   { events: "Any payment event", test: [["Your system", "POST normalized JSON"]], where: "Send POST with X-Webhook-Signature = HMAC-SHA256(body, secret)" },
+};
+
+function ConnectWizard({ appConfig, integrations, backendUrl, onClose, onToast }) {
+  const origin = (typeof window !== "undefined" ? window.location.origin : backendUrl);
+  const gateways = integrations?.gateways || [];
+  const [sel, setSel] = useState(gateways[0]?.name || "Razorpay");
+  const g = gateways.find(x => x.name === sel) || {};
+  const tip = GATEWAY_TEST_TIPS[sel] || GATEWAY_TEST_TIPS.Custom;
+  const webhookUrl = `${origin}${g.path || "/api/webhooks/gateway/" + sel.toLowerCase()}`;
   const realOnly = !!appConfig?.real_only;
   const count = appConfig?.real_payment_count ?? 0;
+  const secretEnv = sel === "Razorpay" ? "RAZORPAY_WEBHOOK_SECRET"
+    : sel === "Stripe" ? "STRIPE_WEBHOOK_SECRET"
+    : `${sel.toUpperCase()}_WEBHOOK_SECRET (or shared GATEWAY_WEBHOOK_SECRET)`;
 
   const copy = (v, label) => { navigator.clipboard?.writeText(v); onToast(`${label} copied`); };
+  const Field = ({ label, value, secret }) => (
+    <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <div className="text-[9px] text-slate-500 uppercase font-bold">{label}</div>
+        <div className="text-[11px] font-mono text-slate-200 truncate">{secret ? "•••••••• (set as a Space secret)" : value}</div>
+      </div>
+      {!secret && (
+        <button onClick={() => copy(value, label)} className="flex items-center gap-1 text-[9px] text-blue-300 hover:text-blue-200 font-bold uppercase border border-blue-500/30 rounded px-2 py-1 flex-shrink-0">
+          <Copy className="w-2.5 h-2.5" /> Copy
+        </button>
+      )}
+    </div>
+  );
   const Step = ({ n, title, children }) => (
     <div className="flex gap-3">
       <div className="w-6 h-6 rounded-full bg-blue-500/15 border border-blue-500/40 text-blue-300 text-xs font-black flex items-center justify-center flex-shrink-0">{n}</div>
       <div className="flex-1 min-w-0"><div className="text-sm font-bold text-slate-200 mb-1">{title}</div><div className="text-xs text-slate-400 space-y-2">{children}</div></div>
     </div>
   );
-  const Field = ({ label, value, secret }) => (
-    <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between gap-2">
-      <div className="min-w-0">
-        <div className="text-[9px] text-slate-500 uppercase font-bold">{label}</div>
-        <div className="text-[11px] font-mono text-slate-200 truncate">{secret ? "••••••••••••••••" : value}</div>
-      </div>
-      <button onClick={() => copy(value, label)} className="flex items-center gap-1 text-[9px] text-blue-300 hover:text-blue-200 font-bold uppercase border border-blue-500/30 rounded px-2 py-1 flex-shrink-0">
-        <Copy className="w-2.5 h-2.5" /> Copy
-      </button>
-    </div>
-  );
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 bg-black/55 backdrop-blur-sm animate-in fade-in" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[88vh] overflow-y-auto custom-scrollbar glass-card rounded-2xl border border-white/10 shadow-2xl shadow-black/60" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 bg-[#060c22]/95 backdrop-blur border-b border-slate-800/60 p-5 flex items-center justify-between">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto custom-scrollbar glass-card rounded-2xl border border-white/10 shadow-2xl shadow-black/60" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 bg-[#060c22]/95 backdrop-blur border-b border-slate-800/60 p-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center glow-blue"><Radio className="w-4 h-4" /></div>
             <div>
-              <div className="text-sm font-black text-white">Connect Payment Gateway</div>
-              <div className="text-[10px] text-slate-500">Stream real Razorpay payments into the dashboard</div>
+              <div className="text-sm font-black text-white">Connect Payment Gateways</div>
+              <div className="text-[10px] text-slate-500">Each gateway has its own signed webhook</div>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-full"><X className="w-4 h-4 text-slate-400" /></button>
         </div>
 
+        {/* Gateway selector */}
+        <div className="p-5 pb-0">
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Choose a gateway</div>
+          <div className="flex flex-wrap gap-2">
+            {gateways.map(x => (
+              <button key={x.name} onClick={() => setSel(x.name)}
+                className={cn("flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all",
+                  sel === x.name ? "bg-blue-500/15 border-blue-500/50 text-blue-200" : "bg-slate-900/50 border-slate-700/50 text-slate-400 hover:text-slate-200")}>
+                <span className={cn("w-1.5 h-1.5 rounded-full", x.live ? "bg-emerald-500" : x.configured ? "bg-blue-500" : "bg-slate-500")} />
+                {x.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Status banner */}
-        <div className={cn("mx-5 mt-5 p-3 rounded-xl border flex items-center gap-3",
-          realOnly ? "bg-green-500/10 border-green-500/30" : linked ? "bg-amber-500/10 border-amber-500/30" : "bg-slate-800/40 border-slate-700/50")}>
-          <div className={cn("w-2.5 h-2.5 rounded-full", realOnly ? "bg-green-500 animate-pulse" : linked ? "bg-amber-500 animate-pulse" : "bg-slate-500")} />
+        <div className={cn("mx-5 mt-4 p-3 rounded-xl border flex items-center gap-3",
+          g.live ? "bg-green-500/10 border-green-500/30" : g.configured ? "bg-amber-500/10 border-amber-500/30" : "bg-slate-800/40 border-slate-700/50")}>
+          <div className={cn("w-2.5 h-2.5 rounded-full", g.live ? "bg-green-500 animate-pulse" : g.configured ? "bg-amber-500 animate-pulse" : "bg-slate-500")} />
           <div className="text-xs font-bold text-slate-200">
-            {realOnly ? `Live — ${count} real payment${count === 1 ? "" : "s"} received` : linked ? "Razorpay secret set · awaiting first real payment" : "Not connected · showing demo data"}
+            {g.live ? `${sel} live — ${g.txn_count} event${g.txn_count === 1 ? "" : "s"} received`
+              : g.configured ? `${sel} secret set · awaiting first real payment`
+              : `${sel} not configured · set its webhook secret to enable`}
           </div>
         </div>
 
         <div className="p-5 space-y-5">
-          <Step n={1} title="Create a free Razorpay account (Test Mode is free, no KYC)">
-            Open the Razorpay Dashboard and stay in <b className="text-slate-200">Test Mode</b> (top-left toggle).
+          <Step n={1} title={`Add the webhook in your ${sel} dashboard`}>
+            <p>{tip.where}. Point it at:</p>
+            <Field label={`${sel} Webhook URL`} value={webhookUrl} />
+            <Field label="Signature scheme" value={g.scheme || "HMAC-SHA256"} />
+            <Field label="Secret env var" value={secretEnv} secret />
+            <p className="text-[10px] text-slate-500">Events: <span className="font-mono text-slate-300">{tip.events}</span></p>
           </Step>
-          <Step n={2} title="Add a webhook">
-            <p>Go to <b className="text-slate-200">Settings → Webhooks → Add New Webhook</b> and paste:</p>
-            <Field label="Webhook URL" value={webhookUrl} />
-            <Field label="Secret" value="(set on your Space as RAZORPAY_WEBHOOK_SECRET)" secret />
-            <p className="text-[10px] text-slate-500">The secret is stored privately on your deployment — copy it from your Space settings if you need the exact value.</p>
-            <p>Select events: <span className="font-mono text-slate-300">payment.captured</span>, <span className="font-mono text-slate-300">payment.failed</span>, <span className="font-mono text-slate-300">refund.processed</span>.</p>
-          </Step>
-          <Step n={3} title="Make a test payment">
-            <p>Create a <b className="text-slate-200">Payment Link</b> in Razorpay and pay it with test credentials:</p>
+          <Step n={2} title="Make a test payment (sandbox / test mode — free)">
             <div className="grid grid-cols-2 gap-2">
-              <Field label="Test UPI (success)" value="success@razorpay" />
-              <Field label="Test card" value="4111 1111 1111 1111" />
+              {tip.test.map(([l, v]) => <Field key={l} label={l} value={v} />)}
             </div>
-            <p className="text-[10px] text-slate-500">Use <span className="font-mono">failure@razorpay</span> to test a failed payment.</p>
           </Step>
-          <Step n={4} title="Watch it appear">
-            The payment shows in your live feed within seconds and the badge flips to <b className="text-green-400">Real Payments</b>. The simulator then goes quiet so you see only genuine payments.
+          <Step n={3} title="Watch it appear — real data only">
+            The payment shows in your live feed within seconds and <b className="text-green-400">real-only mode</b> switches on{realOnly ? ` (already active — ${count} real payment${count === 1 ? "" : "s"} so far)` : ""}, so the simulator goes quiet and you see only genuine gateway data.
           </Step>
 
           <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60">
-            <button onClick={() => copy(webhookUrl, "Webhook URL")} className="btn-gradient flex-1 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest text-white flex items-center justify-center gap-2">
-              <Copy className="w-3.5 h-3.5" /> Copy Webhook URL
+            <button onClick={() => copy(webhookUrl, `${sel} webhook URL`)} className="btn-gradient flex-1 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest text-white flex items-center justify-center gap-2">
+              <Copy className="w-3.5 h-3.5" /> Copy {sel} URL
             </button>
             <button onClick={onClose} className="px-4 py-2.5 text-[11px] font-bold text-slate-400 hover:text-white">Close</button>
           </div>
