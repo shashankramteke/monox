@@ -730,12 +730,15 @@ export default function App() {
   return (
     <div className="relative flex min-h-screen text-slate-100 font-sans">
       {/* Deep-space background: nebulas, starfield, shooting stars, portal arc,
-          and the live interactive constellation network */}
-      <div className="aurora-bg" />
-      <div className="particles" />
-      <div className="shooting-stars" />
-      <div className="portal-arc" />
-      <ParticleField />
+          and the live interactive constellation network — dimmed so the
+          dashboard content stays in the foreground. */}
+      <div className="bg-layer">
+        <div className="aurora-bg" />
+        <div className="particles" />
+        <div className="shooting-stars" />
+        <div className="portal-arc" />
+        <ParticleField />
+      </div>
 
       {/* Sidebar */}
       <aside className="relative z-10 w-64 border-r border-white/5 bg-[#050b1e]/40 backdrop-blur-xl p-6 flex flex-col gap-8">

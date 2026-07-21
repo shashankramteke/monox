@@ -18,6 +18,18 @@
    ══════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────
+   BACKGROUND LAYER — wraps all decorative effects and dims them so
+   the dashboard content clearly sits in the foreground.
+   ────────────────────────────────────────────────────────────── */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+/* ──────────────────────────────────────────────────────────────
    SPACE BACKGROUND — deep navy + soft blue nebulas
    ────────────────────────────────────────────────────────────── */
 .aurora-bg {
