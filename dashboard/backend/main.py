@@ -1453,6 +1453,7 @@ async def get_config():
         "since": REAL_PAYMENTS_SEEN["since"],
         "auto_real_only": AUTO_REAL_ONLY,
         "txn_simulator": TXN_SIMULATOR_ENABLED,
+        "simulator": SIMULATOR_ENABLED,
         "integrations": {
             "razorpay": bool(RAZORPAY_WEBHOOK_SECRET),
             "stripe": bool(STRIPE_WEBHOOK_SECRET),
@@ -1931,18 +1932,25 @@ async def ingest_transaction(txn: IngestTxn, request: Request):
     return {"status": "ok", "txn_id": d["txn_id"]}
 
 # --- KUBERNETES API ---
+# When the simulator is off there is no real cluster behind the app, so we
+# return a "disabled" empty snapshot instead of synthetic pods.
+_K8S_DISABLED = {
+    "disabled": True, "nodes": [], "pods": [], "events": [],
+    "summary": {"nodes_ready": 0, "nodes_total": 0, "pods_running": 0, "pods_total": 0,
+                "cluster_cpu_pct": 0, "cluster_mem_pct": 0, "total_restarts": 0},
+}
 
 @app.get("/api/k8s/cluster")
 async def get_k8s_cluster():
-    return k8s_cluster.snapshot()
+    return k8s_cluster.snapshot() if SIMULATOR_ENABLED else _K8S_DISABLED
 
 @app.get("/api/k8s/pods")
 async def get_k8s_pods():
-    return k8s_cluster.snapshot()["pods"]
+    return k8s_cluster.snapshot()["pods"] if SIMULATOR_ENABLED else []
 
 @app.get("/api/k8s/events")
 async def get_k8s_events():
-    return k8s_cluster.events[:60]
+    return k8s_cluster.events[:60] if SIMULATOR_ENABLED else []
 
 @app.post("/api/rca/{trace_id}")
 async def analyze_trace(trace_id: str, event: AnomalyEvent):

@@ -1010,6 +1010,18 @@ export default function App() {
           <StatCard label="Anomaly Rate" value={summaryStats.errorRate} trend={stats.total_traces > 0 ? `${stats.anomaly_count}/${stats.total_traces}` : "Normal"} icon={<Shield className="text-emerald-400" />} color="emerald" series={summaryStats.anomalySeries} delay={180} />
         </div>
 
+        {/* Real-data-only notice: service metrics need a live telemetry source */}
+        {appConfig && appConfig.simulator === false && chartData.length === 0 && (
+          <div className="glass-card p-4 mb-8 flex items-center gap-3 border border-amber-500/20">
+            <Activity className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <p className="text-xs text-slate-400">
+              <b className="text-slate-200">Real-data-only mode.</b> Service metrics (latency/throughput) need a live
+              telemetry source, so these charts are empty — but real payment anomalies still appear in the incident
+              stream below. See the <b className="text-slate-200">Transactions</b> &amp; <b className="text-slate-200">Integrations</b> views for your live payment data.
+            </p>
+          </div>
+        )}
+
         {/* Chart View */}
         <div className="glass-card p-6 mb-8">
           <div className="flex justify-between items-center mb-6">
@@ -2026,6 +2038,18 @@ function podAge(startedAt) {
 }
 
 function KubernetesView({ k8s }) {
+  if (k8s?.disabled) {
+    return (
+      <div className="glass-card p-12 text-center animate-in fade-in">
+        <Boxes className="w-12 h-12 mx-auto mb-4 text-slate-600" />
+        <div className="text-lg font-bold text-slate-300 mb-2">No live cluster connected</div>
+        <p className="text-sm text-slate-500 max-w-md mx-auto">
+          Synthetic data is off (real-data-only mode). Kubernetes monitoring needs a real
+          cluster telemetry source — connect one to populate this view.
+        </p>
+      </div>
+    );
+  }
   if (!k8s) {
     return (
       <div className="py-24 text-center text-slate-600 text-sm">
