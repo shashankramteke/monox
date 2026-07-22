@@ -68,9 +68,9 @@ RT_PAY_TIMES = deque(maxlen=1000)             # epoch time of each real payment 
 RT_PAY_LAT = deque(maxlen=300)                # recent real payment latencies (p99)
 RT_TUNING = {
     "fail_window": 12,        # look at last N txns for a gateway
-    "fail_min": 6,            # need at least this many to judge
-    "fail_rate": 0.40,        # >40% failures -> spike
-    "velocity_per_min": 8,    # >N txns/min from one user -> fraud velocity
+    "fail_min": 3,            # need at least this many to judge (testable manually)
+    "fail_rate": 0.50,        # >=50% failures -> spike
+    "velocity_per_min": 5,    # >=N txns/min from one user -> fraud velocity
     "dup_window_s": 120,      # same (user,amount) within N seconds -> duplicate
     "latency_ms": 8000,       # single txn slower than this -> gateway timeout
     "refire_cooldown_s": 45,  # don't refire the same alert type/target too often
@@ -1712,6 +1712,11 @@ async def razorpay_webhook(request: Request):
                 or ((payment.get("card") or {}).get("network"))
                 or "Razorpay")
 
+    # Real latency = time from payment creation to this event (capture/failure).
+    ev_created = event.get("created_at")
+    pay_created = payment.get("created_at")
+    latency = round(max(0.0, (ev_created - pay_created) * 1000.0), 1) if (ev_created and pay_created) else 0.0
+
     txn = {
         "txn_id": entity.get("id") or f"TXN{uuid.uuid4().hex[:12].upper()}",
         "order_id": entity.get("order_id") or payment.get("order_id") or "—",
@@ -1722,7 +1727,7 @@ async def razorpay_webhook(request: Request):
         "amount": round((entity.get("amount") or 0) / 100.0, 2),  # paise → rupees
         "currency": (entity.get("currency") or "INR").upper(),
         "status": status,
-        "latency_ms": 0.0,
+        "latency_ms": latency,
         "failure_reason": payment.get("error_code") or payment.get("error_reason"),
         "user": _mask_user(payment.get("email") or "", payment.get("contact") or ""),
     }
