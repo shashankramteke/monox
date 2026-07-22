@@ -1010,14 +1010,14 @@ export default function App() {
           <StatCard label="Anomaly Rate" value={summaryStats.errorRate} trend={stats.total_traces > 0 ? `${stats.anomaly_count}/${stats.total_traces}` : "Normal"} icon={<Shield className="text-emerald-400" />} color="emerald" series={summaryStats.anomalySeries} delay={180} />
         </div>
 
-        {/* Real-data-only notice: service metrics need a live telemetry source */}
+        {/* Real-data-only notice: observability metrics derive from real payments */}
         {appConfig && appConfig.simulator === false && chartData.length === 0 && (
           <div className="glass-card p-4 mb-8 flex items-center gap-3 border border-amber-500/20">
             <Activity className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <p className="text-xs text-slate-400">
-              <b className="text-slate-200">Real-data-only mode.</b> Service metrics (latency/throughput) need a live
-              telemetry source, so these charts are empty — but real payment anomalies still appear in the incident
-              stream below. See the <b className="text-slate-200">Transactions</b> &amp; <b className="text-slate-200">Integrations</b> views for your live payment data.
+              <b className="text-slate-200">Real-data-only mode.</b> These charts are derived from your real payment
+              traffic (throughput &amp; P99 latency) — send a payment through a connected gateway to populate them.
+              Real payment anomalies also appear in the incident stream below.
             </p>
           </div>
         )}

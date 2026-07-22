@@ -62,6 +62,10 @@ RT_RECENT = deque(maxlen=400)                 # recent txns (all gateways)
 RT_USER_HITS = defaultdict(lambda: deque(maxlen=60))   # user -> recent timestamps
 RT_SEEN_CHARGES = deque(maxlen=400)           # (user, amount) fingerprints for dup detection
 RT_FIRED = {}                                 # de-dupe: key -> last-fired epoch
+# Real observability metrics are derived from the real payment stream, so the
+# Observability view reflects genuine payment traffic (no synthetic data).
+RT_PAY_TIMES = deque(maxlen=1000)             # epoch time of each real payment (throughput)
+RT_PAY_LAT = deque(maxlen=300)                # recent real payment latencies (p99)
 RT_TUNING = {
     "fail_window": 12,        # look at last N txns for a gateway
     "fail_min": 6,            # need at least this many to judge
@@ -1633,10 +1637,28 @@ async def _ingest_transaction(txn: Dict):
     stats["timestamp"] = txn["timestamp"]
     await broadcast({"type": "txn_stats", "data": stats})
 
+    # Count this real payment toward total volume (for a real anomaly rate)
+    await storage.increment_trace_counter("payment-service", False)
+
+    # ── Real observability metrics, derived from the real payment stream ──
+    import time as _t
+    now_ep = _t.time()
+    now_iso = txn["timestamp"]
+    RT_PAY_TIMES.append(now_ep)
+    RT_PAY_LAT.append(float(txn.get("latency_ms") or 0))
+    throughput = float(sum(1 for ts in RT_PAY_TIMES if now_ep - ts <= 60))  # payments/min
+    lat_sorted = sorted(RT_PAY_LAT)
+    p99 = lat_sorted[min(len(lat_sorted) - 1, int(0.99 * (len(lat_sorted) - 1)))] if lat_sorted else 0.0
+    for mt, val in (("throughput", throughput), ("p99_latency", round(p99, 2))):
+        metric = {"service": "payment-service", "metric_type": mt, "value": val, "timestamp": now_iso}
+        await storage.save_metric(metric)
+        await broadcast({"type": "metric_update", "data": metric})
+
     # Real-time anomaly detection on genuine data
     for alert in _detect_realtime_anomalies(txn):
         await storage.save_alert(alert)
-        await storage.increment_trace_counter(alert["service"], True)
+        # anomalous-only (the payment already counted toward the total above)
+        await storage.increment_trace_counter(alert["service"], True, count=0, anomalous_count=1)
         await broadcast({"type": "new_anomaly", "data": alert})
         logger.info(f"🚨 Real-time anomaly: {alert['anomaly_type']} ({alert['reasons'][0]})")
 
